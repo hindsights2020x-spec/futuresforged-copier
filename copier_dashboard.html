@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FuturesForged — Trade Copier</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#060d14;--bg2:#0a1a26;--bg3:#0e2338;
+  --accent:#00d4ff;--green:#22d08a;--red:#ff4c6e;
+  --gold:#f0a500;--warn:#ffb800;
+  --text:#c8dae8;--muted:#4a7a9b;--border:#0e2a3a;
+}
+body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;min-height:100vh;}
+.wrap{max-width:1600px;margin:0 auto;padding:20px;}
+
+/* HEADER */
+header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:24px;}
+.logo{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:22px;letter-spacing:4px;color:var(--accent);}
+.logo span{color:var(--text);}
+.logo-sub{font-size:10px;color:var(--muted);letter-spacing:2px;margin-top:3px;}
+.header-right{display:flex;align-items:center;gap:16px;}
+.time-badge{font-size:12px;color:var(--muted);border:1px solid var(--border);padding:4px 12px;}
+.estop-btn{padding:10px 20px;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;letter-spacing:3px;border:2px solid var(--red);background:transparent;color:var(--red);cursor:pointer;transition:all .2s;}
+.estop-btn:hover,.estop-btn.active{background:var(--red);color:#fff;}
+
+/* GRID */
+.main-grid{display:grid;grid-template-columns:320px 1fr 300px;gap:16px;align-items:start;}
+
+/* CARDS */
+.card{background:rgba(10,26,38,.9);border:1px solid var(--border);padding:18px;position:relative;overflow:hidden;}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.4;}
+.card-title{font-family:'Rajdhani',sans-serif;font-size:11px;letter-spacing:3px;color:var(--muted);margin-bottom:14px;}
+
+/* ACCOUNT PANEL */
+.acct-item{border:1px solid var(--border);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .2s;}
+.acct-item:hover{border-color:var(--accent);}
+.acct-item.master{border-color:var(--gold);background:rgba(240,165,0,.05);}
+.acct-item.follower-on{border-color:var(--green);background:rgba(34,208,138,.04);}
+.acct-name{font-size:12px;letter-spacing:1px;margin-bottom:4px;}
+.acct-badge{display:inline-block;font-size:8px;letter-spacing:1.5px;padding:2px 6px;margin-right:4px;margin-bottom:4px;}
+.badge-master{background:rgba(240,165,0,.15);border:1px solid rgba(240,165,0,.4);color:var(--gold);}
+.badge-mffu{background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--accent);}
+.badge-personal{background:rgba(74,122,155,.15);border:1px solid rgba(74,122,155,.3);color:var(--muted);}
+.acct-bal{font-size:10px;color:var(--green);margin-top:3px;}
+.acct-plan{font-size:9px;color:var(--muted);}
+
+/* RATIO CONFIG */
+.ratio-row{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;}
+.ratio-label{font-size:9px;color:var(--muted);letter-spacing:1px;}
+.ratio-input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;padding:4px 8px;width:60px;text-align:center;}
+.ratio-input:focus{outline:none;border-color:var(--accent);}
+.toggle-sm{position:relative;width:36px;height:20px;flex-shrink:0;}
+.toggle-sm input{opacity:0;width:0;height:0;}
+.slider-sm{position:absolute;inset:0;background:var(--border);border-radius:20px;cursor:pointer;transition:.3s;}
+.slider-sm:before{content:'';position:absolute;width:14px;height:14px;border-radius:50%;left:3px;top:3px;background:var(--muted);transition:.3s;}
+input:checked+.slider-sm{background:rgba(34,208,138,.2);border:1px solid var(--green);}
+input:checked+.slider-sm:before{transform:translateX(16px);background:var(--green);}
+.override-select{background:var(--bg);border:1px solid var(--border);color:var(--muted);font-family:'Share Tech Mono',monospace;font-size:9px;padding:3px 6px;}
+
+/* ORDER ENTRY */
+.order-panel{display:flex;flex-direction:column;gap:14px;}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.form-group{display:flex;flex-direction:column;gap:4px;}
+.form-label{font-size:9px;letter-spacing:2px;color:var(--muted);}
+.form-select,.form-input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:12px;padding:8px 10px;width:100%;transition:border-color .2s;}
+.form-select:focus,.form-input:focus{outline:none;border-color:var(--accent);}
+.form-select option{background:var(--bg2);}
+.price-fields{display:none;flex-direction:column;gap:10px;}
+.price-fields.visible{display:flex;}
+
+/* DIRECTION BUTTONS */
+.dir-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px;}
+.buy-btn,.sell-btn{padding:18px;font-family:'Rajdhani',sans-serif;font-size:20px;font-weight:700;letter-spacing:4px;border:2px solid;background:transparent;cursor:pointer;transition:all .2s;}
+.buy-btn{border-color:var(--green);color:var(--green);}
+.buy-btn:hover{background:var(--green);color:var(--bg);}
+.sell-btn{border-color:var(--red);color:var(--red);}
+.sell-btn:hover{background:var(--red);color:#fff;}
+
+/* ORDER PREVIEW */
+.preview-box{background:var(--bg);border:1px solid var(--border);padding:12px;font-size:10px;}
+.preview-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(14,42,58,.4);}
+.preview-row:last-child{border-bottom:none;}
+.preview-label{color:var(--muted);}
+.preview-val{color:var(--text);}
+
+/* POSITIONS */
+.pos-item{border:1px solid var(--border);padding:12px;margin-bottom:8px;}
+.pos-dir{font-family:'Rajdhani',sans-serif;font-size:22px;font-weight:700;}
+.pos-dir.LONG{color:var(--green);}
+.pos-dir.SHORT{color:var(--red);}
+.pos-detail{font-size:10px;color:var(--muted);margin-top:4px;}
+
+/* ORDER LOG */
+.order-log{max-height:300px;overflow-y:auto;}
+.order-log::-webkit-scrollbar{width:4px;}
+.order-log::-webkit-scrollbar-thumb{background:var(--border);}
+.order-item{border-bottom:1px solid rgba(14,42,58,.5);padding:8px 0;font-size:10px;}
+.order-item:last-child{border-bottom:none;}
+.order-dir-long{color:var(--green);}
+.order-dir-short{color:var(--red);}
+.order-result-ok{color:var(--green);}
+.order-result-fail{color:var(--red);}
+
+/* EVENT LOG */
+.log-box{height:180px;overflow-y:auto;font-size:10px;line-height:1.8;}
+.log-box::-webkit-scrollbar{width:4px;}
+.log-box::-webkit-scrollbar-thumb{background:var(--border);}
+.log-line.WARN{color:var(--warn);}
+.log-line.ERROR{color:var(--red);}
+.log-line.INFO{color:var(--text);}
+.log-ts{color:var(--muted);margin-right:8px;}
+
+/* WEBHOOK INFO */
+.webhook-box{background:rgba(0,212,255,.04);border:1px solid rgba(0,212,255,.15);padding:12px;font-size:10px;color:var(--muted);line-height:1.8;}
+.webhook-url{color:var(--accent);word-break:break-all;}
+.webhook-json{color:var(--text2);font-size:9px;white-space:pre;background:rgba(0,0,0,.3);padding:8px;margin-top:8px;overflow-x:auto;}
+
+/* INSTRUMENT SELECT */
+.instr-category{font-size:9px;letter-spacing:2px;color:var(--muted);padding:4px 0 2px;margin-top:6px;}
+
+footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;letter-spacing:2px;margin-top:24px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <div class="logo">FUTURES<span>FORGED</span> // COPIER</div>
+    <div class="logo-sub">MANUAL TRADE COPIER · ALL INSTRUMENTS · MASTER/FOLLOWER</div>
+  </div>
+  <div class="header-right">
+    <div class="time-badge" id="time-utc">--:--:-- UTC</div>
+    <button class="estop-btn" id="estop-btn" onclick="emergencyStop()">⛔ EMERGENCY FLATTEN ALL</button>
+  </div>
+</header>
+
+<div class="main-grid">
+
+  <!-- LEFT: Accounts -->
+  <div>
+    <div class="card">
+      <div class="card-title">🏦 ACCOUNTS — SELECT MASTER</div>
+      <div id="account-list">Loading...</div>
+    </div>
+
+    <!-- Webhook info -->
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">📡 TRADINGVIEW WEBHOOK</div>
+      <div class="webhook-box">
+        <div>Point your TradingView alert to:</div>
+        <div class="webhook-url" id="webhook-url">http://localhost:7332/webhook/tradingview</div>
+        <div style="margin-top:8px;">Alert message JSON format:</div>
+        <div class="webhook-json" id="webhook-json">{
+  "instrument": "NQ",
+  "direction": "LONG",
+  "order_type": "Market",
+  "contracts": 1,
+  "limit_price": 0,
+  "stop_price": 0,
+  "trail_pts": 0
+}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER: Order Entry -->
+  <div>
+    <div class="card">
+      <div class="card-title">⚡ ORDER ENTRY</div>
+      <div class="order-panel">
+
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">INSTRUMENT</div>
+            <select class="form-select" id="f-instrument" onchange="updatePreview()">
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">ORDER TYPE</div>
+            <select class="form-select" id="f-order-type" onchange="togglePriceFields(); updatePreview()">
+              <option>Market</option>
+              <option>Limit</option>
+              <option>Stop Market</option>
+              <option>Stop Limit</option>
+              <option>Trailing Stop</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">CONTRACTS (MASTER)</div>
+          <input type="number" class="form-input" id="f-contracts" value="1" min="1" max="50" onchange="updatePreview()">
+        </div>
+
+        <!-- Price fields — shown/hidden based on order type -->
+        <div class="price-fields" id="price-fields">
+          <div class="form-row">
+            <div class="form-group" id="limit-group">
+              <div class="form-label">LIMIT PRICE</div>
+              <input type="number" class="form-input" id="f-limit" placeholder="0.00" step="0.25" onchange="updatePreview()">
+            </div>
+            <div class="form-group" id="stop-group">
+              <div class="form-label">STOP PRICE</div>
+              <input type="number" class="form-input" id="f-stop" placeholder="0.00" step="0.25" onchange="updatePreview()">
+            </div>
+          </div>
+          <div class="form-group" id="trail-group">
+            <div class="form-label">TRAIL POINTS</div>
+            <input type="number" class="form-input" id="f-trail" placeholder="10" step="0.25" onchange="updatePreview()">
+          </div>
+        </div>
+
+        <!-- Order Preview -->
+        <div class="preview-box" id="order-preview">
+          <div class="preview-row"><span class="preview-label">MASTER</span><span class="preview-val" id="prev-master">—</span></div>
+          <div class="preview-row"><span class="preview-label">INSTRUMENT</span><span class="preview-val" id="prev-instr">—</span></div>
+          <div class="preview-row"><span class="preview-label">ORDER TYPE</span><span class="preview-val" id="prev-type">—</span></div>
+          <div class="preview-row"><span class="preview-label">MASTER QTY</span><span class="preview-val" id="prev-qty">—</span></div>
+          <div class="preview-row"><span class="preview-label">FOLLOWERS</span><span class="preview-val" id="prev-followers">—</span></div>
+        </div>
+
+        <!-- BUY / SELL -->
+        <div class="dir-btns">
+          <button class="buy-btn" onclick="placeOrder('LONG')">▲ BUY / LONG</button>
+          <button class="sell-btn" onclick="placeOrder('SHORT')">▼ SELL / SHORT</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Order History -->
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">📋 ORDER HISTORY</div>
+      <div class="order-log" id="order-log">
+        <div style="color:var(--muted);font-size:11px;text-align:center;padding:20px;">No orders yet</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Positions + Log -->
+  <div>
+    <div class="card">
+      <div class="card-title">📊 POSITIONS</div>
+      <div id="positions-panel">
+        <div style="color:var(--muted);font-size:11px;text-align:center;padding:20px;">FLAT</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">🖥️ EVENT LOG</div>
+      <div class="log-box" id="log-box">
+        <div class="log-line INFO"><span class="log-ts">--:--:--</span>Waiting...</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main-grid -->
+
+<footer>FUTURESFORGED TRADE COPIER — LICENSED SOFTWARE — NOT FOR REDISTRIBUTION</footer>
+</div><!-- /wrap -->
+
+<script>
+let appState = {};
+const API = "http://localhost:7332";
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+window.onload = () => {
+  poll();
+  setInterval(poll, 1500);
+  setInterval(() => {
+    document.getElementById("time-utc").textContent =
+      new Date().toUTCString().slice(17,25) + " UTC";
+  }, 1000);
+};
+
+// ═══════════════════════════════════════════════════════════
+// POLLING
+// ═══════════════════════════════════════════════════════════
+async function poll() {
+  try {
+    const r = await fetch(`${API}/api/state`);
+    if (!r.ok) return;
+    appState = await r.json();
+    render();
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════
+function render() {
+  renderInstruments();
+  renderAccounts();
+  renderOrders();
+  renderLog();
+  updatePreview();
+
+  // Emergency button state
+  const eb = document.getElementById("estop-btn");
+  eb.className = appState.emergency ? "estop-btn active" : "estop-btn";
+}
+
+function renderInstruments() {
+  const sel = document.getElementById("f-instrument");
+  if (sel.options.length > 0) return; // already populated
+  if (!appState.instruments) return;
+
+  const cats = {};
+  for (const [k, v] of Object.entries(appState.instruments)) {
+    if (!cats[v.category]) cats[v.category] = [];
+    cats[v.category].push([k, v]);
+  }
+  for (const [cat, items] of Object.entries(cats)) {
+    const grp = document.createElement("optgroup");
+    grp.label = cat;
+    for (const [k, v] of items) {
+      const opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent = `${k} — ${v.name}`;
+      grp.appendChild(opt);
+    }
+    sel.appendChild(grp);
+  }
+}
+
+function renderAccounts() {
+  if (!appState.accounts) return;
+  const el = document.getElementById("account-list");
+  const master = appState.master;
+  const followers = appState.followers || {};
+
+  el.innerHTML = Object.entries(appState.accounts).map(([key, a]) => {
+    const isMaster   = key === master;
+    const follower   = followers[key] || {};
+    const isFollower = follower.enabled && !isMaster;
+
+    const badges = [
+      isMaster ? `<span class="acct-badge badge-master">MASTER</span>` : "",
+      a.credential_set === "mffu" ? `<span class="acct-badge badge-mffu">MFFU</span>` : `<span class="acct-badge badge-personal">PERSONAL</span>`,
+    ].join("");
+
+    const ratioRow = !isMaster ? `
+      <div class="ratio-row">
+        <span class="ratio-label">FOLLOW</span>
+        <label class="toggle-sm">
+          <input type="checkbox" ${follower.enabled ? "checked" : ""}
+            onchange="setFollower('${key}', this.checked, 
+              parseFloat(document.getElementById('ratio-${key}').value),
+              document.getElementById('override-${key}').value)">
+          <span class="slider-sm"></span>
+        </label>
+        <span class="ratio-label">RATIO</span>
+        <input type="number" class="ratio-input" id="ratio-${key}"
+          value="${follower.ratio || 1.0}" min="0.1" max="10" step="0.1"
+          onchange="setFollower('${key}', document.querySelector('#acct-${key} input[type=checkbox]').checked, this.value, document.getElementById('override-${key}').value)">
+        <span class="ratio-label">x</span>
+        <select class="override-select" id="override-${key}"
+          onchange="setFollower('${key}', document.querySelector('#acct-${key} input[type=checkbox]').checked,
+            document.getElementById('ratio-${key}').value, this.value)">
+          <option value="">Same instr</option>
+          ${Object.keys(appState.instruments||{}).map(i => 
+            `<option value="${i}" ${follower.instrument_override===i?'selected':''}>${i}</option>`
+          ).join("")}
+        </select>
+      </div>` : "";
+
+    const cls = isMaster ? "acct-item master" : (isFollower ? "acct-item follower-on" : "acct-item");
+
+    return `
+      <div class="${cls}" id="acct-${key}" onclick="setMaster('${key}')">
+        <div>${badges}</div>
+        <div class="acct-name">${a.label}</div>
+        <div class="acct-plan">${a.rules?.plan || ''} / ${a.rules?.stage || ''}</div>
+        ${a.live_balance ? `<div class="acct-bal">BAL $${Number(a.live_balance).toLocaleString()}</div>` : ''}
+        ${ratioRow}
+      </div>`;
+  }).join("");
+}
+
+function renderOrders() {
+  const el = document.getElementById("order-log");
+  const orders = appState.orders || [];
+  if (!orders.length) return;
+
+  el.innerHTML = orders.map(o => {
+    const dt  = o.dt ? o.dt.slice(11,19) : "--";
+    const cls = o.direction === "LONG" ? "order-dir-long" : "order-dir-short";
+    const results = (o.results || []).map(r =>
+      `<div class="${r.ok ? 'order-result-ok' : 'order-result-fail'}">
+        ${r.role==='master'?'M':'F'} ${r.account}: ${r.ok ? '✓' : '✗'} ${r.msg}
+      </div>`
+    ).join("");
+    return `
+      <div class="order-item">
+        <div><span class="log-ts">${dt}</span>
+          <span class="${cls}">${o.direction}</span>
+          ${o.contracts}x ${o.instrument} — ${o.order_type}
+        </div>
+        <div style="margin-top:4px;padding-left:8px;">${results}</div>
+      </div>`;
+  }).join("");
+}
+
+function renderLog() {
+  const lb = document.getElementById("log-box");
+  const logs = appState.log || [];
+  if (!logs.length) return;
+  lb.innerHTML = logs.map(l =>
+    `<div class="log-line ${l.level}"><span class="log-ts">${l.ts}</span>${esc(l.msg)}</div>`
+  ).join("");
+}
+
+function updatePreview() {
+  const instr    = document.getElementById("f-instrument")?.value || "—";
+  const type     = document.getElementById("f-order-type")?.value || "—";
+  const qty      = document.getElementById("f-contracts")?.value || 1;
+  const master   = appState.master;
+  const masterLbl = master ? (appState.accounts?.[master]?.label || master) : "Not set";
+  const followers = appState.followers || {};
+  const followerCount = Object.values(followers).filter(f => f.enabled).length;
+
+  document.getElementById("prev-master").textContent  = masterLbl;
+  document.getElementById("prev-instr").textContent   = instr;
+  document.getElementById("prev-type").textContent    = type;
+  document.getElementById("prev-qty").textContent     = qty + " contracts";
+  document.getElementById("prev-followers").textContent = followerCount + " account(s) will copy";
+}
+
+// ═══════════════════════════════════════════════════════════
+// PRICE FIELDS TOGGLE
+// ═══════════════════════════════════════════════════════════
+function togglePriceFields() {
+  const type   = document.getElementById("f-order-type").value;
+  const pf     = document.getElementById("price-fields");
+  const lg     = document.getElementById("limit-group");
+  const sg     = document.getElementById("stop-group");
+  const tg     = document.getElementById("trail-group");
+
+  pf.classList.remove("visible");
+  lg.style.display = "none";
+  sg.style.display = "none";
+  tg.style.display = "none";
+
+  if (type === "Limit") {
+    pf.classList.add("visible"); lg.style.display = "flex";
+  } else if (type === "Stop Market") {
+    pf.classList.add("visible"); sg.style.display = "flex";
+  } else if (type === "Stop Limit") {
+    pf.classList.add("visible"); lg.style.display = "flex"; sg.style.display = "flex";
+  } else if (type === "Trailing Stop") {
+    pf.classList.add("visible"); tg.style.display = "flex";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// ACTIONS
+// ═══════════════════════════════════════════════════════════
+async function setMaster(key) {
+  await fetch(`${API}/api/set_master`, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({account_key: key})
+  });
+  await poll();
+}
+
+async function setFollower(key, enabled, ratio, override) {
+  await fetch(`${API}/api/set_follower`, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      account_key: key,
+      enabled: enabled,
+      ratio: parseFloat(ratio) || 1.0,
+      instrument_override: override || null,
+    })
+  });
+  await poll();
+}
+
+async function placeOrder(direction) {
+  if (!appState.master) {
+    alert("Please select a master account first.");
+    return;
+  }
+  const instrument  = document.getElementById("f-instrument").value;
+  const order_type  = document.getElementById("f-order-type").value;
+  const contracts   = parseInt(document.getElementById("f-contracts").value) || 1;
+  const limit_price = parseFloat(document.getElementById("f-limit")?.value) || 0;
+  const stop_price  = parseFloat(document.getElementById("f-stop")?.value) || 0;
+  const trail_pts   = parseFloat(document.getElementById("f-trail")?.value) || 0;
+
+  const confirmed = confirm(
+    `Confirm: ${direction} ${contracts}x ${instrument} (${order_type})\n` +
+    `Master: ${appState.accounts?.[appState.master]?.label}\n` +
+    `This will copy to all enabled follower accounts.`
+  );
+  if (!confirmed) return;
+
+  await fetch(`${API}/api/place_order`, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({instrument, direction, order_type, contracts,
+                          limit_price, stop_price, trail_pts})
+  });
+  await poll();
+}
+
+async function emergencyStop() {
+  if (!confirm("EMERGENCY FLATTEN ALL POSITIONS on ALL accounts?")) return;
+  await fetch(`${API}/api/emergency`, {
+    method: "POST", headers: {"Content-Type":"application/json"}, body: "{}"
+  });
+  await poll();
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+</script>
+</body>
+</html>

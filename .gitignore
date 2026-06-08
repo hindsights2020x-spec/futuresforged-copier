@@ -1,0 +1,9 @@
+# runtime state & logs — not source
+copier_state.json
+copier_state.json.bak
+copier.out
+__pycache__/
+*.pyc
+# real env (only the .example is tracked)
+copier.env
+.env

@@ -1,0 +1,70 @@
+#
+# FuturesForged Trade Copier (Handoff #28) — standalone service on :7332
+# Companion to ff-bot.service; intentionally independent of the bot engine.
+#
+# Install:
+#   sudo cp /home/tom/copier/copier.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable copier.service
+#   sudo systemctl start copier.service
+#
+# Operate:
+#   sudo systemctl status copier.service
+#   sudo systemctl restart copier.service
+#   journalctl -u copier.service -f          # tail logs
+#
+# SAFETY: ships in SIMULATION. Real broker submits require COPIER_LIVE=1 plus an
+# explicit COPIER_LIVE_ROUTES map — do NOT add those here without Tom's go. When
+# the time comes, put them in /home/tom/copier/copier.env (optional EnvironmentFile
+# below) so the unit itself never carries live credentials/flags.
+#
+# This unit mirrors ff-bot.service:
+#   - single-instance lock via flock (refuses to start a second copy)
+#   - frees a stale :7332 (the Errno 98 collision seen on 2026-06-04) before launch
+#   - on-failure restart only; clean stop stays stopped
+#   - rate-limited restarts; logs to journald
+
+[Unit]
+Description=FuturesForged Trade Copier (:7332)
+Documentation=https://github.com/hindsights2020x-spec/futuresforged-deploys
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=tom
+Group=tom
+WorkingDirectory=/home/tom/copier
+
+# Banner/log lines flush to journald immediately
+Environment=PYTHONUNBUFFERED=1
+
+# Optional overrides (COPIER_PORT, and — only with Tom's go — COPIER_LIVE /
+# COPIER_LIVE_ROUTES). The leading '-' makes it optional; absent today.
+EnvironmentFile=-/home/tom/copier/copier.env
+
+# Free a stale :7332 left by a manual `python3 copier_server.py` before launch
+ExecStartPre=/bin/bash -c 'fuser -k 7332/tcp 2>/dev/null || true; sleep 1; true'
+
+# Single-instance lock + run. flock -n refuses to start if the lock is held.
+# venv python so a future COPIER_LIVE=1 has the Rithmic deps; runs SIM fine too.
+ExecStart=/usr/bin/flock -n /tmp/ff-copier.lock /home/tom/futuresforged-bot/venv/bin/python /home/tom/copier/copier_server.py
+
+KillSignal=SIGTERM
+TimeoutStopSec=15
+SendSIGKILL=yes
+
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ff-copier
+
+LimitNOFILE=8192
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
