@@ -13,7 +13,7 @@ emergency flatten + TradingView webhook are ALL implemented here.
 
 Run:  python3 copier_server.py        (state persists to copier_state.json)
 """
-import json, os, threading, random
+import json, os, threading, random, urllib.request, urllib.parse
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -39,6 +39,72 @@ except Exception:
 COPIER_BLOCKED_BROKER_ACCOUNTS = {
     a.strip() for a in os.environ.get("COPIER_BLOCKED_BROKER_ACCOUNTS", "229107").split(",") if a.strip()
 }
+
+
+# --- Chart bars proxy (Handoff #30) ----------------------------------------
+# The copier has no market-data feed of its own; the live Rithmic 1m bars live
+# on ff-bot (:7331). We source them through the read-only view (:7333), which
+# proxies /api/bars and is gated by a STATIC, reboot-safe DASHBOARD_VIEW_TOKEN
+# (no rotating session token needed). 1m bars are aggregated to the requested
+# interval here. Upstream has NQ/ES buffers only -> micros map to their mini
+# (MNQ->NQ, MES->ES), matching the Handoff #29 L2 mapping.
+BARS_SOURCE  = os.environ.get("BARS_SOURCE_URL", "http://127.0.0.1:7333")
+BOT_ENV_PATH = os.environ.get("BOT_ENV_PATH", "/home/tom/futuresforged-bot/.env")
+_BARS_ROOT_MAP = {"NQ": "NQ", "MNQ": "NQ", "ES": "ES", "MES": "ES"}
+
+def _bars_token():
+    """Static view token: copier env first, else parse ff-bot's .env."""
+    t = os.environ.get("DASHBOARD_VIEW_TOKEN", "").strip()
+    if t:
+        return t
+    try:
+        with open(BOT_ENV_PATH) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("DASHBOARD_VIEW_TOKEN="):
+                    return s.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
+
+def fetch_bars(root, interval):
+    """Proxy ff-bot's live 1m Rithmic bars (via the :7333 read-only view) and
+    aggregate to `interval` minutes. Returns Handoff #30 shape: list of
+    {time(epoch s), open, high, low, close, volume}, oldest->newest.
+    NOTE: upstream is 1m-only (max ~600 bars) -> a 5m chart tops out ~120 bars,
+    short of the spec's 300-500. True deep history needs Rithmic historical
+    backfill (copier Rithmic is order-only/inert) — out of v1 scope."""
+    root = (root or "NQ").upper()
+    sym  = _BARS_ROOT_MAP.get(root, "NQ")
+    try:
+        interval = max(1, int(interval))
+    except (TypeError, ValueError):
+        interval = 5
+    qs  = urllib.parse.urlencode({"symbol": sym, "tf": "1m", "n": "600",
+                                  "k": _bars_token()})
+    url = f"{BARS_SOURCE}/api/bars?{qs}"
+    with urllib.request.urlopen(url, timeout=4) as r:
+        raw = json.loads(r.read() or b"{}")
+    span, buckets, order = interval * 60, {}, []
+    for b in raw.get("bars", []):
+        try:
+            epoch = int(datetime.fromisoformat(b["t"]).timestamp())
+            o, h, l, c = float(b["o"]), float(b["h"]), float(b["l"]), float(b["c"])
+            v = int(b.get("v", 0) or 0)
+        except Exception:
+            continue
+        key = (epoch // span) * span
+        agg = buckets.get(key)
+        if agg is None:
+            buckets[key] = {"time": key, "open": o, "high": h,
+                            "low": l, "close": c, "volume": v}
+            order.append(key)
+        else:
+            agg["high"]   = max(agg["high"], h)
+            agg["low"]    = min(agg["low"], l)
+            agg["close"]  = c
+            agg["volume"] += v
+    return [buckets[k] for k in sorted(order)]
 
 
 def now_iso():
@@ -333,6 +399,19 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/state"):
             with _LOCK:
                 self._send(200, STATE)
+        elif self.path.startswith("/api/bars"):
+            # Handoff #30 — Rithmic-backed bars (proxied from ff-bot via :7333).
+            q        = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            root     = (q.get("root", ["NQ"])[0] or "NQ").upper()
+            interval = q.get("interval", ["5"])[0]
+            try:
+                bars = fetch_bars(root, interval)
+                self._send(200, {"root": root, "interval": str(interval),
+                                 "bars": bars, "count": len(bars),
+                                 "source": "ff-bot:1m-agg"})
+            except Exception as e:
+                self._send(200, {"root": root, "interval": str(interval),
+                                 "bars": [], "count": 0, "error": str(e)})
         elif self.path in ("/", "/index.html") and os.path.exists(DASHBOARD):
             with open(DASHBOARD, "rb") as f:
                 self._send(200, f.read(), "text/html; charset=utf-8")
