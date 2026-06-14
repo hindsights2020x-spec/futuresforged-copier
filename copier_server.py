@@ -71,16 +71,17 @@ def fetch_bars(root, interval):
     """Proxy ff-bot's live 1m Rithmic bars (via the :7333 read-only view) and
     aggregate to `interval` minutes. Returns Handoff #30 shape: list of
     {time(epoch s), open, high, low, close, volume}, oldest->newest.
-    NOTE: upstream is 1m-only (max ~600 bars) -> a 5m chart tops out ~120 bars,
-    short of the spec's 300-500. True deep history needs Rithmic historical
-    backfill (copier Rithmic is order-only/inert) — out of v1 scope."""
+    NOTE: upstream 1m buffer raised to 3000 (Handoff #30) -> a 5m chart can hold
+    up to ~600 bars, meeting the spec's 300-500. The buffer fills live (no
+    historical backfill), so depth accrues over ~1-2 trading days after a bot
+    restart; deep instant history would still need a Rithmic historical pull."""
     root = (root or "NQ").upper()
     sym  = _BARS_ROOT_MAP.get(root, "NQ")
     try:
         interval = max(1, int(interval))
     except (TypeError, ValueError):
         interval = 5
-    qs  = urllib.parse.urlencode({"symbol": sym, "tf": "1m", "n": "600",
+    qs  = urllib.parse.urlencode({"symbol": sym, "tf": "1m", "n": "3000",
                                   "k": _bars_token()})
     url = f"{BARS_SOURCE}/api/bars?{qs}"
     with urllib.request.urlopen(url, timeout=4) as r:
