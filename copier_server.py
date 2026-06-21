@@ -138,6 +138,11 @@ DEFAULT_STATE = {
     },
     "orders": [],
     "positions": {},   # account_key -> {qty(signed), avg, instrument} for per-trade P&L
+    # Handoff #31 — per-account kill switch + daily loss/win limits. A missing
+    # entry == active with no limits (preserves prior behavior). kill_switch
+    # True=active / False=halted. Enforced server-side as an EXTRA fail-closed
+    # gate before any order routes to an account (see _route_to / _account_active).
+    "account_controls": {},  # account_key -> {kill_switch, max_loss, max_win, day_pnl, day_key, halted_reason}
     "log": [{"ts": hhmmss(), "level": "INFO", "msg": "Session started"}],
 }
 
@@ -150,6 +155,7 @@ def load_state():
             for k in ("accounts", "instruments"):
                 s.setdefault(k, DEFAULT_STATE[k])
             s.setdefault("orders", []); s.setdefault("log", []); s.setdefault("positions", {})
+            s.setdefault("account_controls", {})  # Handoff #31
             return s
         except Exception:
             pass
@@ -321,6 +327,70 @@ def _fill_pnl(account_key, ord_dict, r):
                        int(ord_dict["contracts"]), r["fill_price"])
 
 
+# ---------------------------------------------------------------------------
+# Handoff #31 — per-account kill switch + daily loss/win limits
+# ---------------------------------------------------------------------------
+# These add an EXTRA, fail-closed gate IN FRONT of submit_order(): an account
+# that is killed or has breached its daily loss/win cap is skipped before the
+# (separately gated) live/SIM execution path is even reached. They never touch
+# COPIER_LIVE, the route map, or COPIER_BLOCKED_BROKER_ACCOUNTS.
+def _today():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+def _get_controls(account_key):
+    """Controls dict for an account, creating a default (active, no limits) entry
+    on first use. Rolls the day over — zeroes day P&L and clears an AUTO halt
+    (max-loss / target) — when the UTC date changes. A manual OFF is preserved."""
+    ac = STATE.setdefault("account_controls", {})
+    c = ac.get(account_key)
+    if c is None:
+        c = {"kill_switch": True, "max_loss": 0.0, "max_win": 0.0,
+             "day_pnl": 0.0, "day_key": _today(), "halted_reason": None}
+        ac[account_key] = c
+    if c.get("day_key") != _today():
+        c["day_key"] = _today()
+        c["day_pnl"] = 0.0
+        if c.get("halted_reason") in ("MAX LOSS", "TARGET HIT"):
+            c["kill_switch"] = True
+            c["halted_reason"] = None
+    return c
+
+def _account_active(account_key):
+    """(active, reason). Missing controls -> active. Kill switch OFF -> halted."""
+    c = _get_controls(account_key)
+    if not c.get("kill_switch", True):
+        return False, (c.get("halted_reason") or "OFF")
+    return True, None
+
+def _record_pnl_and_check(account_key, pnl):
+    """Add realized per-trade P&L to the account's running day total and auto-halt
+    (flip kill switch OFF) if a daily loss/win cap is hit or exceeded."""
+    if pnl is None:
+        return
+    c = _get_controls(account_key)
+    c["day_pnl"] = round(c.get("day_pnl", 0.0) + float(pnl), 2)
+    max_loss = float(c.get("max_loss") or 0)
+    max_win  = float(c.get("max_win") or 0)
+    if c.get("kill_switch", True) and max_loss > 0 and c["day_pnl"] <= -max_loss:
+        c["kill_switch"] = False; c["halted_reason"] = "MAX LOSS"
+        log(f"{_acct_short(account_key)} HALTED — max daily loss hit (${c['day_pnl']})", "WARN")
+    elif c.get("kill_switch", True) and max_win > 0 and c["day_pnl"] >= max_win:
+        c["kill_switch"] = False; c["halted_reason"] = "TARGET HIT"
+        log(f"{_acct_short(account_key)} HALTED — daily target hit (${c['day_pnl']})", "WARN")
+
+def _route_to(account_key, order):
+    """Per-account gate, then submit. Returns (result, realized_pnl). A killed or
+    limit-breached account is skipped WITHOUT reaching submit_order()."""
+    active, reason = _account_active(account_key)
+    if not active:
+        log(f"Order not routed to {_acct_short(account_key)} — halted ({reason})", "WARN")
+        return {"ok": False, "msg": f"halted ({reason}) — not routed"}, None
+    r = submit_order(account_key, order)
+    pnl = _fill_pnl(account_key, order, r)
+    _record_pnl_and_check(account_key, pnl)
+    return r, pnl
+
+
 def place_order(order):
     """Place on master, then copy to each enabled follower applying ratio + instrument override."""
     with _LOCK:
@@ -329,8 +399,7 @@ def place_order(order):
             return {"ok": False, "results": [], "msg": "emergency active"}
         master = STATE["master"]
         results = []
-        r = submit_order(master, order)
-        m_pnl = _fill_pnl(master, order, r)
+        r, m_pnl = _route_to(master, order)
         results.append({"role": "master", "account": _acct_short(master), "ok": r["ok"], "msg": r["msg"], "pnl": m_pnl})
         for fk, fcfg in STATE["followers"].items():
             if not fcfg.get("enabled"):
@@ -340,8 +409,8 @@ def place_order(order):
             forder["contracts"] = contracts
             if fcfg.get("instrument_override"):
                 forder["instrument"] = fcfg["instrument_override"]
-            r = submit_order(fk, forder)
-            results.append({"role": "follower", "account": _acct_short(fk), "ok": r["ok"], "msg": r["msg"], "pnl": _fill_pnl(fk, forder, r)})
+            r, f_pnl = _route_to(fk, forder)
+            results.append({"role": "follower", "account": _acct_short(fk), "ok": r["ok"], "msg": r["msg"], "pnl": f_pnl})
         STATE["orders"].insert(0, {
             "dt": now_iso(), "instrument": order["instrument"], "direction": order["direction"],
             "order_type": order["order_type"], "contracts": order["contracts"],
@@ -442,6 +511,37 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/api/clear_emergency"):
                 STATE["emergency"] = False; log("Emergency cleared"); save_state()
                 return self._send(200, {"ok": True})
+            # Handoff #31 — save kill switch + daily loss/win limits for one account
+            if p.startswith("/api/copier/account_controls"):
+                k = b.get("account_id") or b.get("account_key")
+                if not k or k not in STATE["accounts"]:
+                    return self._send(400, {"ok": False, "msg": "unknown account"})
+                c = _get_controls(k)
+                if "kill_switch" in b:
+                    c["kill_switch"] = bool(b["kill_switch"])
+                    # Manual toggle: ON clears any halt reason; OFF marks it manual
+                    c["halted_reason"] = None if c["kill_switch"] else "MANUAL"
+                for fld in ("max_loss", "max_win"):
+                    if fld in b:
+                        try:
+                            c[fld] = max(0.0, float(b.get(fld) or 0))
+                        except (TypeError, ValueError):
+                            pass
+                log(f"Controls {_acct_short(k)}: kill={'ON' if c['kill_switch'] else 'OFF'} "
+                    f"maxLoss=${c['max_loss']:.0f} maxWin=${c['max_win']:.0f}")
+                save_state()
+                return self._send(200, {"ok": True, "controls": c})
+            # Handoff #31 — clear halt state + zero day P&L, re-enable the account
+            if p.startswith("/api/copier/reset_day"):
+                k = b.get("account_id") or b.get("account_key")
+                if not k or k not in STATE["accounts"]:
+                    return self._send(400, {"ok": False, "msg": "unknown account"})
+                c = _get_controls(k)
+                c["day_pnl"] = 0.0; c["day_key"] = _today()
+                c["halted_reason"] = None; c["kill_switch"] = True
+                log(f"Reset day {_acct_short(k)} — halt cleared, re-enabled")
+                save_state()
+                return self._send(200, {"ok": True, "controls": c})
         if p.startswith("/api/place_order"):
             return self._send(200, place_order(b))
         if p.startswith("/api/emergency"):

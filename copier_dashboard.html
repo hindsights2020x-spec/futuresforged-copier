@@ -122,6 +122,42 @@ input:checked+.slider-sm:before{transform:translateX(16px);background:var(--gree
 .instr-category{font-size:9px;letter-spacing:2px;color:var(--muted);padding:4px 0 2px;margin-top:6px;}
 
 footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;letter-spacing:2px;margin-top:24px;}
+
+/* CONTROLS (Handoff #31) */
+.ctrl-open-btn{font-size:9px;letter-spacing:2px;color:var(--muted);background:transparent;border:1px solid var(--border);padding:3px 8px;cursor:pointer;font-family:'Share Tech Mono',monospace;}
+.ctrl-open-btn:hover{border-color:var(--accent);color:var(--accent);}
+.halt-badge{display:inline-block;font-size:8px;letter-spacing:1px;padding:2px 6px;margin-top:4px;}
+.halt-loss{background:rgba(255,76,110,.12);border:1px solid var(--red);color:var(--red);}
+.halt-win{background:rgba(34,208,138,.12);border:1px solid var(--green);color:var(--green);}
+.halt-manual{background:rgba(255,184,0,.1);border:1px solid var(--warn);color:var(--warn);}
+
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:999;align-items:flex-start;justify-content:center;padding:60px 16px;overflow-y:auto;}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--bg2);border:1px solid var(--border);width:500px;max-width:96%;max-height:80vh;overflow-y:auto;position:relative;}
+.modal::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.5;}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg2);}
+.modal-title{font-family:'Rajdhani',sans-serif;font-size:15px;letter-spacing:3px;color:var(--accent);}
+.modal-x{background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;}
+.modal-x:hover{color:var(--red);}
+.modal-body{padding:16px 20px;}
+.ctrl-firm-group{font-size:9px;letter-spacing:2px;color:var(--muted);margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid rgba(14,42,58,.6);}
+.ctrl-firm-group:first-child{margin-top:0;}
+.ctrl-row{border:1px solid var(--border);padding:12px;margin-bottom:10px;}
+.ctrl-row.is-halted{border-color:var(--red);background:rgba(255,76,110,.04);}
+.ctrl-acct-name{font-size:12px;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.ctrl-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;}
+.ctrl-field{display:flex;flex-direction:column;gap:3px;}
+.ctrl-field-label{font-size:8px;letter-spacing:1px;color:var(--muted);}
+.ctrl-input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;padding:6px 8px;width:100%;}
+.ctrl-input:focus{outline:none;border-color:var(--accent);}
+.ctrl-kill{display:flex;align-items:center;gap:8px;}
+.ctrl-pnl{font-size:11px;}
+.ctrl-pnl.pos{color:var(--green);}.ctrl-pnl.neg{color:var(--red);}.ctrl-pnl.flat{color:var(--muted);}
+.ctrl-row-actions{display:flex;gap:8px;margin-top:10px;}
+.ctrl-save{flex:1;font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;border:2px solid var(--accent);background:transparent;color:var(--accent);padding:6px;cursor:pointer;}
+.ctrl-save:hover{background:var(--accent);color:var(--bg);}
+.ctrl-reset{font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;border:2px solid var(--muted);background:transparent;color:var(--muted);padding:6px 12px;cursor:pointer;}
+.ctrl-reset:hover{border-color:var(--warn);color:var(--warn);}
 </style>
 </head>
 <body>
@@ -143,7 +179,10 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
   <!-- LEFT: Accounts -->
   <div>
     <div class="card">
-      <div class="card-title">🏦 ACCOUNTS — SELECT MASTER</div>
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <span>🏦 ACCOUNTS — SELECT MASTER</span>
+        <button class="ctrl-open-btn" onclick="openControls()">⚙ CONTROLS</button>
+      </div>
       <div id="account-list">Loading...</div>
     </div>
 
@@ -263,6 +302,17 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
 <footer>FUTURESFORGED TRADE COPIER — LICENSED SOFTWARE — NOT FOR REDISTRIBUTION</footer>
 </div><!-- /wrap -->
 
+<!-- ACCOUNT CONTROLS MODAL (Handoff #31) -->
+<div class="modal-overlay" id="controls-modal" onclick="if(event.target===this)closeControls()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">⚙ ACCOUNT CONTROLS — KILL SWITCH &amp; DAILY LIMITS</div>
+      <button class="modal-x" onclick="closeControls()">✕</button>
+    </div>
+    <div class="modal-body" id="controls-body">Loading...</div>
+  </div>
+</div>
+
 <script>
 let appState = {};
 const API = "http://localhost:7332";
@@ -304,6 +354,11 @@ function render() {
   // Emergency button state
   const eb = document.getElementById("estop-btn");
   eb.className = appState.emergency ? "estop-btn active" : "estop-btn";
+
+  // Live-refresh open controls modal (P&L / halt state) without clobbering inputs
+  if (document.getElementById("controls-modal").classList.contains("open")) {
+    updateControlsLive();
+  }
 }
 
 function renderInstruments() {
@@ -372,10 +427,16 @@ function renderAccounts() {
 
     const cls = isMaster ? "acct-item master" : (isFollower ? "acct-item follower-on" : "acct-item");
 
+    const ctrl = (appState.account_controls || {})[key];
+    const haltBadge = (ctrl && ctrl.kill_switch === false)
+      ? `<div class="halt-badge ${ctrl.halted_reason==='MAX LOSS'?'halt-loss':ctrl.halted_reason==='TARGET HIT'?'halt-win':'halt-manual'}">[HALTED — ${ctrl.halted_reason||'OFF'}]</div>`
+      : "";
+
     return `
       <div class="${cls}" id="acct-${key}" onclick="setMaster('${key}')">
         <div>${badges}</div>
         <div class="acct-name">${a.label}</div>
+        ${haltBadge}
         <div class="acct-plan">${a.rules?.plan || ''} / ${a.rules?.stage || ''}</div>
         ${a.live_balance ? `<div class="acct-bal">BAL $${Number(a.live_balance).toLocaleString()}</div>` : ''}
         ${ratioRow}
@@ -519,6 +580,116 @@ async function emergencyStop() {
 
 function esc(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// ═══════════════════════════════════════════════════════════
+// ACCOUNT CONTROLS — kill switch + daily loss/win limits (Handoff #31)
+// ═══════════════════════════════════════════════════════════
+const FIRM_LABELS = { mffu: "MYFUNDEDFUTURES (MFFU)", personal: "PERSONAL / AMP", lucid: "LUCID TRADING" };
+function firmLabel(set) { return FIRM_LABELS[set] || String(set || "OTHER").toUpperCase(); }
+
+function ctrlFor(key) {
+  return (appState.account_controls || {})[key]
+      || { kill_switch: true, max_loss: 0, max_win: 0, day_pnl: 0, halted_reason: null };
+}
+
+function pnlClass(v) { return v > 0 ? "pos" : v < 0 ? "neg" : "flat"; }
+function pnlText(v)  { const n = Number(v || 0); return (n >= 0 ? "+$" : "-$") + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+function openControls() {
+  renderControls();
+  document.getElementById("controls-modal").classList.add("open");
+}
+function closeControls() {
+  document.getElementById("controls-modal").classList.remove("open");
+}
+
+function renderControls() {
+  const body = document.getElementById("controls-body");
+  const accounts = appState.accounts || {};
+  if (!Object.keys(accounts).length) { body.innerHTML = "<div style='color:var(--muted);font-size:11px;'>No accounts.</div>"; return; }
+
+  // group accounts by prop firm (credential_set)
+  const groups = {};
+  for (const [key, a] of Object.entries(accounts)) {
+    const set = a.credential_set || "other";
+    (groups[set] = groups[set] || []).push([key, a]);
+  }
+
+  body.innerHTML = Object.entries(groups).map(([set, items]) => `
+    <div class="ctrl-firm-group">// ${firmLabel(set)}</div>
+    ${items.map(([key, a]) => {
+      const c = ctrlFor(key);
+      const halted = c.kill_switch === false;
+      const pnl = Number(c.day_pnl || 0);
+      return `
+      <div class="ctrl-row ${halted ? 'is-halted' : ''}" id="ctrl-row-${key}">
+        <div class="ctrl-acct-name">
+          <span>${esc(a.label)}</span>
+          <span class="ctrl-kill">
+            <span class="ratio-label">KILL SWITCH</span>
+            <label class="toggle-sm">
+              <input type="checkbox" id="kill-${key}" ${c.kill_switch ? "checked" : ""}
+                onchange="saveControl('${key}')">
+              <span class="slider-sm"></span>
+            </label>
+          </span>
+        </div>
+        <div class="ctrl-fields">
+          <div class="ctrl-field">
+            <span class="ctrl-field-label">MAX DAILY LOSS ($, 0=off)</span>
+            <input type="number" class="ctrl-input" id="maxloss-${key}" min="0" step="50" value="${Number(c.max_loss||0)}">
+          </div>
+          <div class="ctrl-field">
+            <span class="ctrl-field-label">MAX DAILY WIN ($, 0=off)</span>
+            <input type="number" class="ctrl-input" id="maxwin-${key}" min="0" step="50" value="${Number(c.max_win||0)}">
+          </div>
+        </div>
+        <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span class="ctrl-field-label">CURRENT DAY P&amp;L</span>
+          <span class="ctrl-pnl ${pnlClass(pnl)}" id="pnl-${key}">${pnlText(pnl)}</span>
+        </div>
+        <div class="ctrl-row-actions">
+          <button class="ctrl-save" onclick="saveControl('${key}')">💾 SAVE</button>
+          <button class="ctrl-reset" onclick="resetDay('${key}')">↺ RESET DAY</button>
+        </div>
+      </div>`;
+    }).join("")}
+  `).join("");
+}
+
+// Update only P&L + halt visuals on poll — never rebuild inputs (keeps typing)
+function updateControlsLive() {
+  for (const [key] of Object.entries(appState.accounts || {})) {
+    const c = ctrlFor(key);
+    const pnlEl = document.getElementById(`pnl-${key}`);
+    if (pnlEl) { const v = Number(c.day_pnl || 0); pnlEl.textContent = pnlText(v); pnlEl.className = `ctrl-pnl ${pnlClass(v)}`; }
+    const row = document.getElementById(`ctrl-row-${key}`);
+    if (row) row.classList.toggle("is-halted", c.kill_switch === false);
+    const kill = document.getElementById(`kill-${key}`);
+    if (kill && document.activeElement !== kill) kill.checked = !!c.kill_switch;
+  }
+}
+
+async function saveControl(key) {
+  const kill   = document.getElementById(`kill-${key}`).checked;
+  const maxLoss = parseFloat(document.getElementById(`maxloss-${key}`).value) || 0;
+  const maxWin  = parseFloat(document.getElementById(`maxwin-${key}`).value) || 0;
+  await fetch(`${API}/api/copier/account_controls`, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({account_id: key, kill_switch: kill, max_loss: maxLoss, max_win: maxWin})
+  });
+  await poll();
+}
+
+async function resetDay(key) {
+  if (!confirm(`Reset day for ${appState.accounts?.[key]?.label || key}?\nClears halt state and zeroes day P&L, re-enabling the account.`)) return;
+  await fetch(`${API}/api/copier/reset_day`, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({account_id: key})
+  });
+  await poll();
+  renderControls();
 }
 </script>
 </body>
