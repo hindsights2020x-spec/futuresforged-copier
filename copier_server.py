@@ -108,6 +108,68 @@ def fetch_bars(root, interval):
     return [buckets[k] for k in sorted(order)]
 
 
+# ---------------------------------------------------------------------------
+# Real accounts — pulled live from the bot (option A)
+# ---------------------------------------------------------------------------
+# The copier has no broker connection of its own for account discovery. The bot
+# (:7331) discovers the customer's real accounts; its read-only view (:7333,
+# same static DASHBOARD_VIEW_TOKEN we already use for bars) proxies /api/state,
+# which carries each account's key + label (financials are redacted there — we
+# only need identity/label). We cache the result and refresh on a short TTL so
+# the group UI always shows the customer's real accounts, never placeholders.
+_ACCTS_TTL_SEC = 20
+_accts_cache = {"at": 0.0, "data": None}
+
+def _now_epoch():
+    return datetime.now(timezone.utc).timestamp()
+
+def fetch_bot_accounts():
+    """GET the bot's accounts from the read-only view. Returns {key: {...}} or None."""
+    qs  = urllib.parse.urlencode({"k": _bars_token()})
+    url = f"{BARS_SOURCE}/api/state?{qs}"
+    with urllib.request.urlopen(url, timeout=4) as r:
+        data = json.loads(r.read() or b"{}")
+    raw = data.get("accounts") or {}
+    out = {}
+    for key, a in raw.items():
+        if not isinstance(a, dict):
+            continue
+        out[key] = {
+            "label":          a.get("label", key),
+            "credential_set": a.get("credential_set") or a.get("connector") or "account",
+            "live_balance":   a.get("live_balance") or a.get("balance") or 0,
+            "rules":          a.get("rules") or {},
+        }
+    return out or None
+
+def refresh_accounts(force=False):
+    """Refresh STATE['accounts'] from the bot (cached, TTL-bounded). Never raises."""
+    now = _now_epoch()
+    if not force and _accts_cache["data"] is not None and (now - _accts_cache["at"]) < _ACCTS_TTL_SEC:
+        return
+    try:
+        accts = fetch_bot_accounts()
+    except Exception as e:
+        if _accts_cache["data"] is None:
+            log(f"account fetch failed (bot :7333 view): {e}", "WARN")
+        _accts_cache["at"] = now
+        return
+    _accts_cache["at"] = now
+    if accts is None:
+        return
+    changed = accts != _accts_cache["data"]
+    _accts_cache["data"] = accts
+    with _LOCK:
+        STATE["accounts"] = accts
+        # prune group references to accounts that no longer exist
+        for g in STATE.get("groups", []):
+            if g.get("master") not in accts:
+                g["master"] = None
+            g["subs"] = {k: v for k, v in (g.get("subs") or {}).items() if k in accts}
+    if changed:
+        log(f"accounts refreshed from bot: {len(accts)} account(s)")
+
+
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -118,18 +180,20 @@ def hhmmss():
 # ---------------------------------------------------------------------------
 # Default state (replace accounts/instruments with the real set, or load from file)
 # ---------------------------------------------------------------------------
+# Copy-trading is organised into GROUPS the customer creates: each group has ONE
+# master account and any number of sub accounts. A trade on the master copies to
+# every enabled sub, scaled by the sub's ratio (ratio is the only per-sub setting).
+#
+#   group = {"id": "g1", "name": "Group 1", "enabled": True,
+#            "master": <account_key|None>, "subs": {<account_key>: {"ratio": 1.0}}}
+#
+# Accounts are NO LONGER hardcoded — they are pulled live from the bot's real,
+# broker-discovered set via the read-only view (:7333), see refresh_accounts().
 DEFAULT_STATE = {
-    "master": "tom_cash",
     "emergency": False,
-    "followers": {
-        "mffu_rapid_50k":   {"enabled": True,  "ratio": 1.0, "instrument_override": None},
-        "mffu_builder_50k": {"enabled": False, "ratio": 1.0, "instrument_override": None},
-    },
-    "accounts": {
-        "tom_cash":         {"label": "TOM — CASH ACCOUNT", "credential_set": "personal", "live_balance": 24810, "rules": {"plan": "AMP", "stage": "Live"}},
-        "mffu_rapid_50k":   {"label": "MFFU RAPID 50K",      "credential_set": "mffu",     "live_balance": 51240, "rules": {"plan": "Rapid", "stage": "Stage 1"}},
-        "mffu_builder_50k": {"label": "MFFU BUILDER 50K",    "credential_set": "mffu",     "live_balance": 50000, "rules": {"plan": "Builder", "stage": "Stage 1"}},
-    },
+    "groups": [],            # list of group dicts (see above)
+    "next_group": 1,         # monotonic counter for group ids
+    "accounts": {},          # {account_key: {label, credential_set, live_balance, rules}} — from the bot
     "instruments": {
         "NQ":  {"name": "Nasdaq Futures", "category": "Futures", "tick": 0.25, "tick_value": 5.0},
         "ES":  {"name": "S&P 500 Futures", "category": "Futures", "tick": 0.25, "tick_value": 12.5},
@@ -152,10 +216,14 @@ def load_state():
         try:
             with open(STATE_FILE) as f:
                 s = json.load(f)
-            for k in ("accounts", "instruments"):
-                s.setdefault(k, DEFAULT_STATE[k])
+            s.setdefault("instruments", DEFAULT_STATE["instruments"])
+            s.setdefault("accounts", {})
+            s.setdefault("groups", [])
+            s.setdefault("next_group", len(s.get("groups", [])) + 1)
             s.setdefault("orders", []); s.setdefault("log", []); s.setdefault("positions", {})
             s.setdefault("account_controls", {})  # Handoff #31
+            # Drop the retired flat master/followers model if an old state file has it.
+            s.pop("master", None); s.pop("followers", None)
             return s
         except Exception:
             pass
@@ -391,36 +459,106 @@ def _route_to(account_key, order):
     return r, pnl
 
 
-def place_order(order):
-    """Place on master, then copy to each enabled follower applying ratio + instrument override."""
+_ORDER_TYPE_ALIASES = {
+    "MKT": "Market", "MARKET": "Market", "LMT": "Limit", "LIMIT": "Limit",
+    "STP": "Stop Market", "STOP": "Stop Market", "STOP MARKET": "Stop Market",
+    "STOPLIMIT": "Stop Limit", "STOP LIMIT": "Stop Limit",
+    "TRAIL": "Trailing Stop", "TRAILING STOP": "Trailing Stop",
+}
+
+def _normalize_order(b):
+    """Build a clean order dict, accepting both the copier UI's fields
+    (direction/order_type full names) and Chart Studio's (side/MKT codes)."""
+    direction = str(b.get("direction") or b.get("side") or "LONG").upper()
+    if direction == "BUY":  direction = "LONG"
+    if direction == "SELL": direction = "SHORT"
+    ot = b.get("order_type", "Market")
+    order_type = _ORDER_TYPE_ALIASES.get(str(ot).strip().upper(), ot)
+    order = {
+        "instrument":  (b.get("instrument") or "NQ").upper(),
+        "direction":   direction,
+        "order_type":  order_type,
+        "contracts":   max(1, int(b.get("contracts", 1) or 1)),
+    }
+    for fld in ("limit_price", "stop_price", "trail_pts", "ref_price"):
+        if b.get(fld) not in (None, ""):
+            order[fld] = b[fld]
+    return order
+
+
+def get_group(group_id):
+    for g in STATE.get("groups", []):
+        if g.get("id") == group_id:
+            return g
+    return None
+
+
+def _record_order(gname, order, results, m_pnl):
+    STATE["orders"].insert(0, {
+        "dt": now_iso(), "group": gname,
+        "instrument": order["instrument"], "direction": order["direction"],
+        "order_type": order["order_type"], "contracts": order["contracts"],
+        "pnl": m_pnl,   # per-trade realized P&L (master): null on opening, $ on closing
+        "results": results,
+    })
+    STATE["orders"] = STATE["orders"][:100]
+
+
+def place_order_group(group, order):
+    """Place on the group's master, then copy to each sub scaled by ratio (same
+    instrument as the master — subs carry ratio only)."""
     with _LOCK:
         if STATE.get("emergency"):
             log("Order blocked — emergency stop active", "WARN")
             return {"ok": False, "results": [], "msg": "emergency active"}
-        master = STATE["master"]
+        master = group.get("master")
+        if not master or master not in STATE["accounts"]:
+            return {"ok": False, "results": [], "msg": "group has no valid master"}
+        gname = group.get("name", group.get("id"))
         results = []
         r, m_pnl = _route_to(master, order)
-        results.append({"role": "master", "account": _acct_short(master), "ok": r["ok"], "msg": r["msg"], "pnl": m_pnl})
-        for fk, fcfg in STATE["followers"].items():
-            if not fcfg.get("enabled"):
+        results.append({"group": gname, "role": "master", "account": _acct_short(master),
+                        "ok": r["ok"], "msg": r["msg"], "pnl": m_pnl, "contracts": order["contracts"]})
+        for sk, scfg in (group.get("subs") or {}).items():
+            if sk == master or sk not in STATE["accounts"]:
                 continue
-            contracts = max(1, round(order["contracts"] * float(fcfg.get("ratio", 1.0))))
-            forder = dict(order)
-            forder["contracts"] = contracts
-            if fcfg.get("instrument_override"):
-                forder["instrument"] = fcfg["instrument_override"]
-            r, f_pnl = _route_to(fk, forder)
-            results.append({"role": "follower", "account": _acct_short(fk), "ok": r["ok"], "msg": r["msg"], "pnl": f_pnl})
-        STATE["orders"].insert(0, {
-            "dt": now_iso(), "instrument": order["instrument"], "direction": order["direction"],
-            "order_type": order["order_type"], "contracts": order["contracts"],
-            "pnl": m_pnl,   # per-trade realized P&L (master): null on opening orders, $ on closing trades
-            "results": results,
-        })
-        STATE["orders"] = STATE["orders"][:100]
-        log(f"Order placed: {order['direction']} {order['contracts']}x {order['instrument']}")
+            contracts = max(1, round(order["contracts"] * float(scfg.get("ratio", 1.0))))
+            sorder = dict(order); sorder["contracts"] = contracts
+            r, s_pnl = _route_to(sk, sorder)
+            results.append({"group": gname, "role": "sub", "account": _acct_short(sk),
+                            "ok": r["ok"], "msg": r["msg"], "pnl": s_pnl, "contracts": contracts})
+        _record_order(gname, order, results, m_pnl)
+        log(f"[{gname}] {order['direction']} {order['contracts']}x {order['instrument']}")
         save_state()
         return {"ok": True, "results": results}
+
+
+def place_order_account(account_key, order):
+    """Place ONE order on ONE account (Chart Studio picks a specific account)."""
+    with _LOCK:
+        if STATE.get("emergency"):
+            return {"ok": False, "results": [], "msg": "emergency active"}
+        if account_key not in STATE["accounts"]:
+            return {"ok": False, "results": [], "msg": "unknown account"}
+        r, pnl = _route_to(account_key, order)
+        results = [{"group": "—", "role": "master", "account": _acct_short(account_key),
+                    "ok": r["ok"], "msg": r["msg"], "pnl": pnl, "contracts": order["contracts"]}]
+        _record_order("direct", order, results, pnl)
+        log(f"[direct] {_acct_short(account_key)} {order['direction']} {order['contracts']}x {order['instrument']}")
+        save_state()
+        return {"ok": True, "results": results}
+
+
+def place_order_all(order):
+    """Fan a signal out to EVERY enabled group with a master (webhook path)."""
+    active = [g for g in STATE.get("groups", []) if g.get("enabled") and g.get("master")]
+    if not active:
+        log("Webhook signal ignored — no enabled group with a master", "WARN")
+        return {"ok": False, "results": [], "msg": "no enabled group with a master"}
+    all_results = []
+    for g in active:
+        all_results += place_order_group(g, order).get("results", [])
+    return {"ok": True, "results": all_results}
 
 
 def emergency_flatten():
@@ -467,6 +605,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/state"):
+            refresh_accounts()          # pull the customer's real accounts from the bot (TTL-cached)
             with _LOCK:
                 self._send(200, STATE)
         elif self.path.startswith("/api/bars"):
@@ -491,23 +630,53 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         p, b = self.path, self._body()
         with _LOCK:
-            if p.startswith("/api/set_master"):
-                if b.get("account_key") in STATE["accounts"]:
-                    STATE["master"] = b["account_key"]; log(f"Master set: {_acct_short(b['account_key'])}"); save_state()
+            # ── Trading groups ────────────────────────────────────────────
+            if p.startswith("/api/add_group"):
+                name = (b.get("name") or "").strip() or f"Group {STATE['next_group']}"
+                gid  = f"g{STATE['next_group']}"; STATE["next_group"] += 1
+                STATE["groups"].append({"id": gid, "name": name, "enabled": True, "master": None, "subs": {}})
+                log(f"Group created: {name}"); save_state()
+                return self._send(200, {"ok": True, "id": gid})
+            if p.startswith("/api/remove_group"):
+                before = len(STATE["groups"])
+                STATE["groups"] = [g for g in STATE["groups"] if g.get("id") != b.get("id")]
+                if len(STATE["groups"]) < before:
+                    log(f"Group removed: {b.get('id')}"); save_state()
                     return self._send(200, {"ok": True})
-                return self._send(400, {"ok": False, "msg": "unknown account"})
-            if p.startswith("/api/set_follower"):
+                return self._send(404, {"ok": False, "msg": "group not found"})
+            if p.startswith("/api/set_group_master"):
+                g = get_group(b.get("id"))
+                if not g: return self._send(404, {"ok": False, "msg": "group not found"})
+                k = b.get("account_key") or None
+                if k and k not in STATE["accounts"]:
+                    return self._send(400, {"ok": False, "msg": "unknown account"})
+                g["master"] = k
+                if k: g["subs"].pop(k, None)
+                log(f"Group '{g['name']}' master: {_acct_short(k) if k else '—'}"); save_state()
+                return self._send(200, {"ok": True})
+            if p.startswith("/api/set_group_sub"):
+                g = get_group(b.get("id"))
+                if not g: return self._send(404, {"ok": False, "msg": "group not found"})
                 k = b.get("account_key")
-                if k:
-                    STATE["followers"].setdefault(k, {"enabled": False, "ratio": 1.0, "instrument_override": None})
-                    STATE["followers"][k].update({
-                        "enabled": bool(b.get("enabled", False)),
-                        "ratio": float(b.get("ratio", 1.0)),
-                        "instrument_override": b.get("instrument_override"),
-                    })
-                    log(f"Follower {_acct_short(k)}: {'ON' if b.get('enabled') else 'OFF'} x{b.get('ratio',1.0)}"); save_state()
-                    return self._send(200, {"ok": True})
-                return self._send(400, {"ok": False})
+                if not k or k not in STATE["accounts"]:
+                    return self._send(400, {"ok": False, "msg": "unknown account"})
+                if b.get("remove"):
+                    g["subs"].pop(k, None); log(f"Group '{g['name']}' sub removed: {_acct_short(k)}")
+                elif k == g.get("master"):
+                    return self._send(400, {"ok": False, "msg": "master cannot be its own sub"})
+                else:
+                    ratio = float(b.get("ratio", g["subs"].get(k, {}).get("ratio", 1.0)))
+                    g["subs"][k] = {"ratio": max(0.1, ratio)}
+                    log(f"Group '{g['name']}' sub {_acct_short(k)}: ratio={ratio}x")
+                save_state()
+                return self._send(200, {"ok": True})
+            if p.startswith("/api/set_group"):   # meta: name / enabled
+                g = get_group(b.get("id"))
+                if not g: return self._send(404, {"ok": False, "msg": "group not found"})
+                if "name" in b:    g["name"] = (b.get("name") or g["name"]).strip() or g["name"]
+                if "enabled" in b: g["enabled"] = bool(b.get("enabled"))
+                log(f"Group '{g['name']}': enabled={g['enabled']}"); save_state()
+                return self._send(200, {"ok": True})
             if p.startswith("/api/clear_emergency"):
                 STATE["emergency"] = False; log("Emergency cleared"); save_state()
                 return self._send(200, {"ok": True})
@@ -543,12 +712,20 @@ class Handler(BaseHTTPRequestHandler):
                 save_state()
                 return self._send(200, {"ok": True, "controls": c})
         if p.startswith("/api/place_order"):
-            return self._send(200, place_order(b))
+            # Normalise the order: accept side/BUY-SELL + MKT/LMT/STP aliases (Chart Studio)
+            order = _normalize_order(b)
+            account_key = b.get("account_key")
+            if account_key and not b.get("group_id"):
+                return self._send(200, place_order_account(account_key, order))
+            g = get_group(b.get("group_id"))
+            if not g:
+                return self._send(400, {"ok": False, "msg": "unknown group"})
+            return self._send(200, place_order_group(g, order))
         if p.startswith("/api/emergency"):
             return self._send(200, emergency_flatten())
         if p.startswith("/webhook/tradingview"):
             log("TradingView webhook received")
-            return self._send(200, place_order(b))
+            return self._send(200, place_order_all(_normalize_order(b)))
         self._send(404, {"error": "not found"})
 
 
@@ -561,4 +738,11 @@ if __name__ == "__main__":
         print("  Accounts without an explicit route fail closed (no real submit).")
     else:
         print("EXECUTION = SIMULATION (default). Set COPIER_LIVE=1 + COPIER_LIVE_ROUTES to enable real submits.")
+    # Pull the customer's real accounts from the bot, and seed a starter group
+    # on first run so the dashboard isn't empty.
+    refresh_accounts(force=True)
+    if not STATE["groups"]:
+        gid = f"g{STATE['next_group']}"; STATE["next_group"] += 1
+        STATE["groups"].append({"id": gid, "name": "Group 1", "enabled": True, "master": None, "subs": {}})
+        save_state()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

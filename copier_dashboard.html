@@ -32,33 +32,39 @@ header{display:flex;align-items:center;justify-content:space-between;border-bott
 /* CARDS */
 .card{background:rgba(10,26,38,.9);border:1px solid var(--border);padding:18px;position:relative;overflow:hidden;}
 .card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.4;}
-.card-title{font-family:'Rajdhani',sans-serif;font-size:11px;letter-spacing:3px;color:var(--muted);margin-bottom:14px;}
+.card-title{font-family:'Rajdhani',sans-serif;font-size:11px;letter-spacing:3px;color:var(--muted);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;}
+.btn{background:transparent;border:1px solid var(--border);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;padding:5px 10px;cursor:pointer;}
+.btn:hover{border-color:var(--accent);color:var(--accent);}
+.btn.acc{border-color:var(--accent);color:var(--accent);}
 
-/* ACCOUNT PANEL */
-.acct-item{border:1px solid var(--border);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .2s;}
-.acct-item:hover{border-color:var(--accent);}
-.acct-item.master{border-color:var(--gold);background:rgba(240,165,0,.05);}
-.acct-item.follower-on{border-color:var(--green);background:rgba(34,208,138,.04);}
+/* ACCOUNT OVERVIEW (read-only, real discovered accounts) */
+.firm-hdr{font-size:9px;letter-spacing:2px;color:var(--muted);margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(14,42,58,.6);}
+.firm-hdr:first-child{margin-top:0;}
+.acct-item{border:1px solid var(--border);padding:10px;margin-bottom:8px;}
 .acct-name{font-size:12px;letter-spacing:1px;margin-bottom:4px;}
 .acct-badge{display:inline-block;font-size:8px;letter-spacing:1.5px;padding:2px 6px;margin-right:4px;margin-bottom:4px;}
-.badge-master{background:rgba(240,165,0,.15);border:1px solid rgba(240,165,0,.4);color:var(--gold);}
 .badge-mffu{background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--accent);}
 .badge-personal{background:rgba(74,122,155,.15);border:1px solid rgba(74,122,155,.3);color:var(--muted);}
 .acct-bal{font-size:10px;color:var(--green);margin-top:3px;}
 .acct-plan{font-size:9px;color:var(--muted);}
 
-/* RATIO CONFIG */
-.ratio-row{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;}
-.ratio-label{font-size:9px;color:var(--muted);letter-spacing:1px;}
-.ratio-input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;padding:4px 8px;width:60px;text-align:center;}
-.ratio-input:focus{outline:none;border-color:var(--accent);}
-.toggle-sm{position:relative;width:36px;height:20px;flex-shrink:0;}
-.toggle-sm input{opacity:0;width:0;height:0;}
-.slider-sm{position:absolute;inset:0;background:var(--border);border-radius:20px;cursor:pointer;transition:.3s;}
-.slider-sm:before{content:'';position:absolute;width:14px;height:14px;border-radius:50%;left:3px;top:3px;background:var(--muted);transition:.3s;}
-input:checked+.slider-sm{background:rgba(34,208,138,.2);border:1px solid var(--green);}
-input:checked+.slider-sm:before{transform:translateX(16px);background:var(--green);}
-.override-select{background:var(--bg);border:1px solid var(--border);color:var(--muted);font-family:'Share Tech Mono',monospace;font-size:9px;padding:3px 6px;}
+/* GROUPS */
+.group{border:1px solid var(--border);margin-bottom:12px;padding:12px;}
+.group.off{opacity:.55;}
+.group-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+.group-name{font-size:14px;font-weight:700;color:var(--accent);background:transparent;border:none;border-bottom:1px dashed transparent;outline:none;font-family:'Share Tech Mono',monospace;width:150px;}
+.group-name:focus{border-bottom-color:var(--border);}
+.grow{flex:1;}
+.g-tag{font-size:8px;letter-spacing:1.5px;padding:2px 6px;}
+.g-tag.m{background:rgba(240,165,0,.15);border:1px solid rgba(240,165,0,.4);color:var(--gold);}
+.g-tag.s{background:rgba(34,208,138,.12);border:1px solid rgba(34,208,138,.35);color:var(--green);}
+.g-row{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid rgba(14,42,58,.5);flex-wrap:wrap;}
+.g-row:last-child{border-bottom:none;}
+.g-sel,.g-num{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:10px;padding:4px 6px;}
+.g-num{width:52px;text-align:center;}
+.g-lbl{font-size:9px;color:var(--muted);letter-spacing:1px;}
+.g-subhdr{font-size:9px;letter-spacing:2px;color:var(--muted);margin:10px 0 2px;}
+.g-name-cell{font-size:11px;}
 
 /* ORDER ENTRY */
 .order-panel{display:flex;flex-direction:column;gap:14px;}
@@ -116,48 +122,10 @@ input:checked+.slider-sm:before{transform:translateX(16px);background:var(--gree
 /* WEBHOOK INFO */
 .webhook-box{background:rgba(0,212,255,.04);border:1px solid rgba(0,212,255,.15);padding:12px;font-size:10px;color:var(--muted);line-height:1.8;}
 .webhook-url{color:var(--accent);word-break:break-all;}
-.webhook-json{color:var(--text2);font-size:9px;white-space:pre;background:rgba(0,0,0,.3);padding:8px;margin-top:8px;overflow-x:auto;}
+.webhook-json{color:var(--text);font-size:9px;white-space:pre;background:rgba(0,0,0,.3);padding:8px;margin-top:8px;overflow-x:auto;}
 
-/* INSTRUMENT SELECT */
-.instr-category{font-size:9px;letter-spacing:2px;color:var(--muted);padding:4px 0 2px;margin-top:6px;}
-
+.muted-note{color:var(--muted);font-size:11px;text-align:center;padding:16px;}
 footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;letter-spacing:2px;margin-top:24px;}
-
-/* CONTROLS (Handoff #31) */
-.ctrl-open-btn{font-size:9px;letter-spacing:2px;color:var(--muted);background:transparent;border:1px solid var(--border);padding:3px 8px;cursor:pointer;font-family:'Share Tech Mono',monospace;}
-.ctrl-open-btn:hover{border-color:var(--accent);color:var(--accent);}
-.halt-badge{display:inline-block;font-size:8px;letter-spacing:1px;padding:2px 6px;margin-top:4px;}
-.halt-loss{background:rgba(255,76,110,.12);border:1px solid var(--red);color:var(--red);}
-.halt-win{background:rgba(34,208,138,.12);border:1px solid var(--green);color:var(--green);}
-.halt-manual{background:rgba(255,184,0,.1);border:1px solid var(--warn);color:var(--warn);}
-
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:999;align-items:flex-start;justify-content:center;padding:60px 16px;overflow-y:auto;}
-.modal-overlay.open{display:flex;}
-.modal{background:var(--bg2);border:1px solid var(--border);width:500px;max-width:96%;max-height:80vh;overflow-y:auto;position:relative;}
-.modal::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.5;}
-.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg2);}
-.modal-title{font-family:'Rajdhani',sans-serif;font-size:15px;letter-spacing:3px;color:var(--accent);}
-.modal-x{background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;}
-.modal-x:hover{color:var(--red);}
-.modal-body{padding:16px 20px;}
-.ctrl-firm-group{font-size:9px;letter-spacing:2px;color:var(--muted);margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid rgba(14,42,58,.6);}
-.ctrl-firm-group:first-child{margin-top:0;}
-.ctrl-row{border:1px solid var(--border);padding:12px;margin-bottom:10px;}
-.ctrl-row.is-halted{border-color:var(--red);background:rgba(255,76,110,.04);}
-.ctrl-acct-name{font-size:12px;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
-.ctrl-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;}
-.ctrl-field{display:flex;flex-direction:column;gap:3px;}
-.ctrl-field-label{font-size:8px;letter-spacing:1px;color:var(--muted);}
-.ctrl-input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;padding:6px 8px;width:100%;}
-.ctrl-input:focus{outline:none;border-color:var(--accent);}
-.ctrl-kill{display:flex;align-items:center;gap:8px;}
-.ctrl-pnl{font-size:11px;}
-.ctrl-pnl.pos{color:var(--green);}.ctrl-pnl.neg{color:var(--red);}.ctrl-pnl.flat{color:var(--muted);}
-.ctrl-row-actions{display:flex;gap:8px;margin-top:10px;}
-.ctrl-save{flex:1;font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;border:2px solid var(--accent);background:transparent;color:var(--accent);padding:6px;cursor:pointer;}
-.ctrl-save:hover{background:var(--accent);color:var(--bg);}
-.ctrl-reset{font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;border:2px solid var(--muted);background:transparent;color:var(--muted);padding:6px 12px;cursor:pointer;}
-.ctrl-reset:hover{border-color:var(--warn);color:var(--warn);}
 </style>
 </head>
 <body>
@@ -166,7 +134,7 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
 <header>
   <div>
     <div class="logo">FUTURES<span>FORGED</span> // COPIER</div>
-    <div class="logo-sub">MANUAL TRADE COPIER · ALL INSTRUMENTS · MASTER/FOLLOWER</div>
+    <div class="logo-sub">MANUAL TRADE COPIER · ALL INSTRUMENTS · TRADING GROUPS</div>
   </div>
   <div class="header-right">
     <div class="time-badge" id="time-utc">--:--:-- UTC</div>
@@ -176,48 +144,53 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
 
 <div class="main-grid">
 
-  <!-- LEFT: Accounts -->
+  <!-- LEFT: Accounts (real, discovered) + webhook -->
   <div>
     <div class="card">
-      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-        <span>🏦 ACCOUNTS — SELECT MASTER</span>
-        <button class="ctrl-open-btn" onclick="openControls()">⚙ CONTROLS</button>
-      </div>
-      <div id="account-list">Loading...</div>
+      <div class="card-title">🏦 YOUR ACCOUNTS</div>
+      <div id="account-list"><div class="muted-note">Loading…</div></div>
     </div>
 
-    <!-- Webhook info -->
     <div class="card" style="margin-top:16px;">
       <div class="card-title">📡 TRADINGVIEW WEBHOOK</div>
       <div class="webhook-box">
-        <div>Point your TradingView alert to:</div>
+        <div>Point your TradingView / bot alert to:</div>
         <div class="webhook-url" id="webhook-url">http://localhost:7332/webhook/tradingview</div>
-        <div style="margin-top:8px;">Alert message JSON format:</div>
-        <div class="webhook-json" id="webhook-json">{
+        <div style="margin-top:8px;">Fans out to every enabled group. Alert JSON:</div>
+        <div class="webhook-json">{
   "instrument": "NQ",
   "direction": "LONG",
   "order_type": "Market",
-  "contracts": 1,
-  "limit_price": 0,
-  "stop_price": 0,
-  "trail_pts": 0
+  "contracts": 1
 }</div>
       </div>
     </div>
   </div>
 
-  <!-- CENTER: Order Entry -->
+  <!-- CENTER: Groups + Order Entry + History -->
   <div>
     <div class="card">
+      <div class="card-title">👥 TRADING GROUPS
+        <button class="btn acc" onclick="addGroup()">+ NEW GROUP</button>
+      </div>
+      <div id="groups-list"><div class="muted-note">No groups yet — create one.</div></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
       <div class="card-title">⚡ ORDER ENTRY</div>
       <div class="order-panel">
-
         <div class="form-row">
           <div class="form-group">
-            <div class="form-label">INSTRUMENT</div>
-            <select class="form-select" id="f-instrument" onchange="updatePreview()">
-            </select>
+            <div class="form-label">GROUP</div>
+            <select class="form-select" id="f-group" onchange="updatePreview()"></select>
           </div>
+          <div class="form-group">
+            <div class="form-label">INSTRUMENT</div>
+            <select class="form-select" id="f-instrument" onchange="updatePreview()"></select>
+          </div>
+        </div>
+
+        <div class="form-row">
           <div class="form-group">
             <div class="form-label">ORDER TYPE</div>
             <select class="form-select" id="f-order-type" onchange="togglePriceFields(); updatePreview()">
@@ -228,14 +201,12 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
               <option>Trailing Stop</option>
             </select>
           </div>
+          <div class="form-group">
+            <div class="form-label">CONTRACTS (MASTER)</div>
+            <input type="number" class="form-input" id="f-contracts" value="1" min="1" max="50" onchange="updatePreview()">
+          </div>
         </div>
 
-        <div class="form-group">
-          <div class="form-label">CONTRACTS (MASTER)</div>
-          <input type="number" class="form-input" id="f-contracts" value="1" min="1" max="50" onchange="updatePreview()">
-        </div>
-
-        <!-- Price fields — shown/hidden based on order type -->
         <div class="price-fields" id="price-fields">
           <div class="form-row">
             <div class="form-group" id="limit-group">
@@ -253,29 +224,21 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
           </div>
         </div>
 
-        <!-- Order Preview -->
         <div class="preview-box" id="order-preview">
-          <div class="preview-row"><span class="preview-label">MASTER</span><span class="preview-val" id="prev-master">—</span></div>
-          <div class="preview-row"><span class="preview-label">INSTRUMENT</span><span class="preview-val" id="prev-instr">—</span></div>
-          <div class="preview-row"><span class="preview-label">ORDER TYPE</span><span class="preview-val" id="prev-type">—</span></div>
-          <div class="preview-row"><span class="preview-label">MASTER QTY</span><span class="preview-val" id="prev-qty">—</span></div>
-          <div class="preview-row"><span class="preview-label">FOLLOWERS</span><span class="preview-val" id="prev-followers">—</span></div>
+          <div class="muted-note" style="padding:6px;">Select a group to preview fan-out</div>
         </div>
 
-        <!-- BUY / SELL -->
         <div class="dir-btns">
           <button class="buy-btn" onclick="placeOrder('LONG')">▲ BUY / LONG</button>
           <button class="sell-btn" onclick="placeOrder('SHORT')">▼ SELL / SHORT</button>
         </div>
-
       </div>
     </div>
 
-    <!-- Order History -->
     <div class="card" style="margin-top:16px;">
       <div class="card-title">📋 ORDER HISTORY</div>
       <div class="order-log" id="order-log">
-        <div style="color:var(--muted);font-size:11px;text-align:center;padding:20px;">No orders yet</div>
+        <div class="muted-note">No orders yet</div>
       </div>
     </div>
   </div>
@@ -284,15 +247,13 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
   <div>
     <div class="card">
       <div class="card-title">📊 POSITIONS</div>
-      <div id="positions-panel">
-        <div style="color:var(--muted);font-size:11px;text-align:center;padding:20px;">FLAT</div>
-      </div>
+      <div id="positions-panel"><div class="muted-note">FLAT</div></div>
     </div>
 
     <div class="card" style="margin-top:16px;">
       <div class="card-title">🖥️ EVENT LOG</div>
       <div class="log-box" id="log-box">
-        <div class="log-line INFO"><span class="log-ts">--:--:--</span>Waiting...</div>
+        <div class="log-line INFO"><span class="log-ts">--:--:--</span>Waiting…</div>
       </div>
     </div>
   </div>
@@ -302,24 +263,11 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
 <footer>FUTURESFORGED TRADE COPIER — LICENSED SOFTWARE — NOT FOR REDISTRIBUTION</footer>
 </div><!-- /wrap -->
 
-<!-- ACCOUNT CONTROLS MODAL (Handoff #31) -->
-<div class="modal-overlay" id="controls-modal" onclick="if(event.target===this)closeControls()">
-  <div class="modal">
-    <div class="modal-head">
-      <div class="modal-title">⚙ ACCOUNT CONTROLS — KILL SWITCH &amp; DAILY LIMITS</div>
-      <button class="modal-x" onclick="closeControls()">✕</button>
-    </div>
-    <div class="modal-body" id="controls-body">Loading...</div>
-  </div>
-</div>
-
 <script>
 let appState = {};
 const API = "http://localhost:7332";
 
-// ═══════════════════════════════════════════════════════════
-// INIT
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────── INIT
 window.onload = () => {
   poll();
   setInterval(poll, 1500);
@@ -329,9 +277,7 @@ window.onload = () => {
   }, 1000);
 };
 
-// ═══════════════════════════════════════════════════════════
-// POLLING
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────── POLL
 async function poll() {
   try {
     const r = await fetch(`${API}/api/state`);
@@ -341,127 +287,181 @@ async function poll() {
   } catch(e) {}
 }
 
-// ═══════════════════════════════════════════════════════════
-// RENDER
-// ═══════════════════════════════════════════════════════════
+function post(path, body) {
+  return fetch(`${API}${path}`, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body || {})
+  }).then(r => r.json().catch(() => ({}))).then(d => {
+    if (d && d.ok === false && d.msg) alert(d.msg);
+    return poll().then(() => d);
+  });
+}
+
+// ─────────────────────────────────────────── RENDER
 function render() {
   renderInstruments();
   renderAccounts();
+  renderGroups();
+  renderOrderGroupSelect();
   renderOrders();
   renderLog();
   updatePreview();
+  document.getElementById("estop-btn").className =
+    appState.emergency ? "estop-btn active" : "estop-btn";
+}
 
-  // Emergency button state
-  const eb = document.getElementById("estop-btn");
-  eb.className = appState.emergency ? "estop-btn active" : "estop-btn";
+function acctLabel(key) {
+  return appState.accounts?.[key]?.label || key || "—";
+}
 
-  // Live-refresh open controls modal (P&L / halt state) without clobbering inputs
-  if (document.getElementById("controls-modal").classList.contains("open")) {
-    updateControlsLive();
-  }
+// Accounts that are already master or sub anywhere (for hinting only)
+function usedKeys() {
+  const s = new Set();
+  (appState.groups || []).forEach(g => {
+    if (g.master) s.add(g.master);
+    Object.keys(g.subs || {}).forEach(k => s.add(k));
+  });
+  return s;
 }
 
 function renderInstruments() {
   const sel = document.getElementById("f-instrument");
-  if (sel.options.length > 0) return; // already populated
-  if (!appState.instruments) return;
-
+  if (sel.options.length > 0 || !appState.instruments) return;
   const cats = {};
   for (const [k, v] of Object.entries(appState.instruments)) {
-    if (!cats[v.category]) cats[v.category] = [];
-    cats[v.category].push([k, v]);
+    (cats[v.category] = cats[v.category] || []).push([k, v]);
   }
   for (const [cat, items] of Object.entries(cats)) {
     const grp = document.createElement("optgroup");
     grp.label = cat;
     for (const [k, v] of items) {
       const opt = document.createElement("option");
-      opt.value = k;
-      opt.textContent = `${k} — ${v.name}`;
+      opt.value = k; opt.textContent = `${k} — ${v.name}`;
       grp.appendChild(opt);
     }
     sel.appendChild(grp);
   }
 }
 
+// LEFT panel: real discovered accounts, grouped by prop firm
 function renderAccounts() {
-  if (!appState.accounts) return;
   const el = document.getElementById("account-list");
-  const master = appState.master;
-  const followers = appState.followers || {};
+  const accounts = appState.accounts || {};
+  const entries = Object.entries(accounts);
+  if (!entries.length) {
+    el.innerHTML = `<div class="muted-note">No accounts discovered.<br>Check broker credentials.</div>`;
+    return;
+  }
+  const firms = {};
+  for (const [key, a] of entries) {
+    const f = (a.credential_set || "personal").toUpperCase();
+    (firms[f] = firms[f] || []).push([key, a]);
+  }
+  const used = usedKeys();
+  el.innerHTML = Object.entries(firms).map(([firm, items]) => `
+    <div class="firm-hdr">// ${esc(firm)} — ${items.length} account${items.length>1?"s":""}</div>
+    ${items.map(([key, a]) => {
+      const badge = a.credential_set === "mffu"
+        ? `<span class="acct-badge badge-mffu">MFFU</span>`
+        : `<span class="acct-badge badge-personal">PERSONAL</span>`;
+      return `
+      <div class="acct-item">
+        <div>${badge}${used.has(key) ? `<span class="acct-badge badge-personal">IN A GROUP</span>` : ""}</div>
+        <div class="acct-name">${esc(a.label)}</div>
+        <div class="acct-plan">${esc(a.rules?.plan || "")} / ${esc(a.rules?.stage || "")}</div>
+        ${a.live_balance ? `<div class="acct-bal">BAL $${Number(a.live_balance).toLocaleString()}</div>` : ""}
+      </div>`;
+    }).join("")}
+  `).join("");
+}
 
-  el.innerHTML = Object.entries(appState.accounts).map(([key, a]) => {
-    const isMaster   = key === master;
-    const follower   = followers[key] || {};
-    const isFollower = follower.enabled && !isMaster;
+// CENTER: group management
+function renderGroups() {
+  const el = document.getElementById("groups-list");
+  const groups = appState.groups || [];
+  if (!groups.length) {
+    el.innerHTML = `<div class="muted-note">No groups yet — create one.</div>`;
+    return;
+  }
+  const accounts = appState.accounts || {};
+  el.innerHTML = groups.map(g => {
+    const masterOpts = `<option value="">— select master —</option>` +
+      Object.entries(accounts).map(([k, a]) =>
+        `<option value="${k}" ${g.master===k?"selected":""}>${esc(a.label)}</option>`).join("");
 
-    const badges = [
-      isMaster ? `<span class="acct-badge badge-master">MASTER</span>` : "",
-      a.credential_set === "mffu" ? `<span class="acct-badge badge-mffu">MFFU</span>` : `<span class="acct-badge badge-personal">PERSONAL</span>`,
-    ].join("");
+    const subRows = Object.entries(g.subs || {}).map(([k, sc]) => `
+      <div class="g-row">
+        <span class="g-tag s">SUB</span>
+        <span class="g-name-cell grow">${esc(acctLabel(k))}</span>
+        <span class="g-lbl">RATIO</span>
+        <input class="g-num" type="number" min="0.1" max="10" step="0.1" value="${sc.ratio}"
+          onchange="setSub('${g.id}','${k}', this.value)">
+        <span class="g-lbl">x</span>
+        <button class="btn" onclick="removeSub('${g.id}','${k}')">✕</button>
+      </div>`).join("");
 
-    const ratioRow = !isMaster ? `
-      <div class="ratio-row">
-        <span class="ratio-label">FOLLOW</span>
-        <label class="toggle-sm">
-          <input type="checkbox" ${follower.enabled ? "checked" : ""}
-            onchange="setFollower('${key}', this.checked, 
-              parseFloat(document.getElementById('ratio-${key}').value),
-              document.getElementById('override-${key}').value)">
-          <span class="slider-sm"></span>
-        </label>
-        <span class="ratio-label">RATIO</span>
-        <input type="number" class="ratio-input" id="ratio-${key}"
-          value="${follower.ratio || 1.0}" min="0.1" max="10" step="0.1"
-          onchange="setFollower('${key}', document.querySelector('#acct-${key} input[type=checkbox]').checked, this.value, document.getElementById('override-${key}').value)">
-        <span class="ratio-label">x</span>
-        <select class="override-select" id="override-${key}"
-          onchange="setFollower('${key}', document.querySelector('#acct-${key} input[type=checkbox]').checked,
-            document.getElementById('ratio-${key}').value, this.value)">
-          <option value="">Same instr</option>
-          ${Object.keys(appState.instruments||{}).map(i => 
-            `<option value="${i}" ${follower.instrument_override===i?'selected':''}>${i}</option>`
-          ).join("")}
-        </select>
-      </div>` : "";
-
-    const cls = isMaster ? "acct-item master" : (isFollower ? "acct-item follower-on" : "acct-item");
-
-    const ctrl = (appState.account_controls || {})[key];
-    const haltBadge = (ctrl && ctrl.kill_switch === false)
-      ? `<div class="halt-badge ${ctrl.halted_reason==='MAX LOSS'?'halt-loss':ctrl.halted_reason==='TARGET HIT'?'halt-win':'halt-manual'}">[HALTED — ${ctrl.halted_reason||'OFF'}]</div>`
-      : "";
+    // sub picker: exclude this group's master and existing subs
+    const takenInGroup = new Set([g.master, ...Object.keys(g.subs || {})]);
+    const subPicker = Object.entries(accounts)
+      .filter(([k]) => !takenInGroup.has(k))
+      .map(([k, a]) => `<option value="${k}">${esc(a.label)}</option>`).join("");
 
     return `
-      <div class="${cls}" id="acct-${key}" onclick="setMaster('${key}')">
-        <div>${badges}</div>
-        <div class="acct-name">${a.label}</div>
-        ${haltBadge}
-        <div class="acct-plan">${a.rules?.plan || ''} / ${a.rules?.stage || ''}</div>
-        ${a.live_balance ? `<div class="acct-bal">BAL $${Number(a.live_balance).toLocaleString()}</div>` : ''}
-        ${ratioRow}
+      <div class="group ${g.enabled ? "" : "off"}">
+        <div class="group-head">
+          <input class="group-name" value="${esc(g.name)}"
+            onchange="renameGroup('${g.id}', this.value)">
+          <span class="grow"></span>
+          <button class="btn" onclick="toggleGroup('${g.id}', ${!g.enabled})">${g.enabled ? "ON" : "OFF"}</button>
+          <button class="btn" onclick="removeGroup('${g.id}','${esc(g.name)}')">✕</button>
+        </div>
+
+        <div class="g-row">
+          <span class="g-tag m">MASTER</span>
+          <select class="g-sel grow" onchange="setMaster('${g.id}', this.value)">${masterOpts}</select>
+        </div>
+
+        <div class="g-subhdr">SUB ACCOUNTS (ratio only)</div>
+        ${subRows || `<div class="muted-note" style="padding:6px;">No subs yet</div>`}
+        <div class="g-row" style="border:none;margin-top:4px;">
+          <select class="g-sel grow" id="addsub-${g.id}">
+            <option value="">+ add sub account…</option>${subPicker}
+          </select>
+          <button class="btn acc" onclick="addSub('${g.id}')">ADD</button>
+        </div>
       </div>`;
   }).join("");
+}
+
+// Order-entry group dropdown (enabled groups with a master)
+function renderOrderGroupSelect() {
+  const sel = document.getElementById("f-group");
+  const prev = sel.value;
+  const opts = (appState.groups || [])
+    .filter(g => g.enabled && g.master)
+    .map(g => `<option value="${g.id}">${esc(g.name)} — ${esc(acctLabel(g.master))}</option>`)
+    .join("");
+  sel.innerHTML = opts || `<option value="">no ready groups</option>`;
+  if (prev) sel.value = prev;
 }
 
 function renderOrders() {
   const el = document.getElementById("order-log");
   const orders = appState.orders || [];
   if (!orders.length) return;
-
   el.innerHTML = orders.map(o => {
     const dt  = o.dt ? o.dt.slice(11,19) : "--";
     const cls = o.direction === "LONG" ? "order-dir-long" : "order-dir-short";
     const results = (o.results || []).map(r =>
       `<div class="${r.ok ? 'order-result-ok' : 'order-result-fail'}">
-        ${r.role==='master'?'M':'F'} ${r.account}: ${r.ok ? '✓' : '✗'} ${r.msg}
-      </div>`
-    ).join("");
+        ${r.role==='master'?'M':'S'} ${esc(r.account)}: ${r.ok ? '✓' : '✗'} ${esc(r.msg)}
+      </div>`).join("");
     return `
       <div class="order-item">
         <div><span class="log-ts">${dt}</span>
+          ${o.group ? `<span class="g-lbl">[${esc(o.group)}]</span> ` : ""}
           <span class="${cls}">${o.direction}</span>
-          ${o.contracts}x ${o.instrument} — ${o.order_type}
+          ${o.contracts}x ${esc(o.instrument)} — ${esc(o.order_type)}
         </div>
         <div style="margin-top:4px;padding-left:8px;">${results}</div>
       </div>`;
@@ -473,223 +473,93 @@ function renderLog() {
   const logs = appState.log || [];
   if (!logs.length) return;
   lb.innerHTML = logs.map(l =>
-    `<div class="log-line ${l.level}"><span class="log-ts">${l.ts}</span>${esc(l.msg)}</div>`
-  ).join("");
+    `<div class="log-line ${l.level}"><span class="log-ts">${l.ts}</span>${esc(l.msg)}</div>`).join("");
 }
 
 function updatePreview() {
-  const instr    = document.getElementById("f-instrument")?.value || "—";
-  const type     = document.getElementById("f-order-type")?.value || "—";
-  const qty      = document.getElementById("f-contracts")?.value || 1;
-  const master   = appState.master;
-  const masterLbl = master ? (appState.accounts?.[master]?.label || master) : "Not set";
-  const followers = appState.followers || {};
-  const followerCount = Object.values(followers).filter(f => f.enabled).length;
-
-  document.getElementById("prev-master").textContent  = masterLbl;
-  document.getElementById("prev-instr").textContent   = instr;
-  document.getElementById("prev-type").textContent    = type;
-  document.getElementById("prev-qty").textContent     = qty + " contracts";
-  document.getElementById("prev-followers").textContent = followerCount + " account(s) will copy";
+  const box = document.getElementById("order-preview");
+  const gid = document.getElementById("f-group")?.value;
+  const g = (appState.groups || []).find(x => x.id === gid);
+  const instr = document.getElementById("f-instrument")?.value || "—";
+  const type  = document.getElementById("f-order-type")?.value || "—";
+  const qty   = parseInt(document.getElementById("f-contracts")?.value) || 1;
+  if (!g) { box.innerHTML = `<div class="muted-note" style="padding:6px;">Select a group to preview fan-out</div>`; return; }
+  let rows = `
+    <div class="preview-row"><span class="preview-label">MASTER</span><span class="preview-val">${esc(acctLabel(g.master))} — ${qty}x ${esc(instr)}</span></div>
+    <div class="preview-row"><span class="preview-label">ORDER TYPE</span><span class="preview-val">${esc(type)}</span></div>`;
+  const subs = Object.entries(g.subs || {});
+  if (subs.length) {
+    rows += subs.map(([k, sc]) => {
+      const c = Math.max(1, Math.round(qty * (sc.ratio || 1)));
+      return `<div class="preview-row"><span class="preview-label">SUB ${esc(acctLabel(k))}</span><span class="preview-val">${c}x ${esc(instr)} (${sc.ratio}x)</span></div>`;
+    }).join("");
+  } else {
+    rows += `<div class="preview-row"><span class="preview-label">SUBS</span><span class="preview-val">none</span></div>`;
+  }
+  box.innerHTML = rows;
 }
 
-// ═══════════════════════════════════════════════════════════
-// PRICE FIELDS TOGGLE
-// ═══════════════════════════════════════════════════════════
+// ─────────────────────────────────────────── PRICE FIELDS
 function togglePriceFields() {
-  const type   = document.getElementById("f-order-type").value;
-  const pf     = document.getElementById("price-fields");
-  const lg     = document.getElementById("limit-group");
-  const sg     = document.getElementById("stop-group");
-  const tg     = document.getElementById("trail-group");
-
+  const type = document.getElementById("f-order-type").value;
+  const pf = document.getElementById("price-fields");
+  const lg = document.getElementById("limit-group");
+  const sg = document.getElementById("stop-group");
+  const tg = document.getElementById("trail-group");
   pf.classList.remove("visible");
-  lg.style.display = "none";
-  sg.style.display = "none";
-  tg.style.display = "none";
-
-  if (type === "Limit") {
-    pf.classList.add("visible"); lg.style.display = "flex";
-  } else if (type === "Stop Market") {
-    pf.classList.add("visible"); sg.style.display = "flex";
-  } else if (type === "Stop Limit") {
-    pf.classList.add("visible"); lg.style.display = "flex"; sg.style.display = "flex";
-  } else if (type === "Trailing Stop") {
-    pf.classList.add("visible"); tg.style.display = "flex";
-  }
+  lg.style.display = sg.style.display = tg.style.display = "none";
+  if (type === "Limit") { pf.classList.add("visible"); lg.style.display = "flex"; }
+  else if (type === "Stop Market") { pf.classList.add("visible"); sg.style.display = "flex"; }
+  else if (type === "Stop Limit") { pf.classList.add("visible"); lg.style.display = "flex"; sg.style.display = "flex"; }
+  else if (type === "Trailing Stop") { pf.classList.add("visible"); tg.style.display = "flex"; }
 }
 
-// ═══════════════════════════════════════════════════════════
-// ACTIONS
-// ═══════════════════════════════════════════════════════════
-async function setMaster(key) {
-  await fetch(`${API}/api/set_master`, {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({account_key: key})
-  });
-  await poll();
+// ─────────────────────────────────────────── GROUP ACTIONS
+async function addGroup() {
+  const n = prompt("Group name:", "Group " + ((appState.groups || []).length + 1));
+  if (n !== null) await post("/api/add_group", {name: n});
+}
+function removeGroup(id, name) {
+  if (confirm(`Remove group "${name}"?`)) post("/api/remove_group", {id});
+}
+function renameGroup(id, name) { post("/api/set_group", {id, name}); }
+function toggleGroup(id, enabled) { post("/api/set_group", {id, enabled}); }
+function setMaster(id, account_key) { post("/api/set_group_master", {id, account_key}); }
+function addSub(id) {
+  const k = document.getElementById("addsub-" + id).value;
+  if (k) post("/api/set_group_sub", {id, account_key: k, ratio: 1.0});
+}
+function setSub(id, account_key, ratio) {
+  post("/api/set_group_sub", {id, account_key, ratio: parseFloat(ratio) || 1.0});
+}
+function removeSub(id, account_key) {
+  post("/api/set_group_sub", {id, account_key, remove: true});
 }
 
-async function setFollower(key, enabled, ratio, override) {
-  await fetch(`${API}/api/set_follower`, {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({
-      account_key: key,
-      enabled: enabled,
-      ratio: parseFloat(ratio) || 1.0,
-      instrument_override: override || null,
-    })
-  });
-  await poll();
-}
-
+// ─────────────────────────────────────────── ORDER
 async function placeOrder(direction) {
-  if (!appState.master) {
-    alert("Please select a master account first.");
-    return;
-  }
+  const gid = document.getElementById("f-group").value;
+  const g = (appState.groups || []).find(x => x.id === gid);
+  if (!g) { alert("Create a group with a master first."); return; }
   const instrument  = document.getElementById("f-instrument").value;
   const order_type  = document.getElementById("f-order-type").value;
   const contracts   = parseInt(document.getElementById("f-contracts").value) || 1;
   const limit_price = parseFloat(document.getElementById("f-limit")?.value) || 0;
   const stop_price  = parseFloat(document.getElementById("f-stop")?.value) || 0;
   const trail_pts   = parseFloat(document.getElementById("f-trail")?.value) || 0;
-
-  const confirmed = confirm(
-    `Confirm: ${direction} ${contracts}x ${instrument} (${order_type})\n` +
-    `Master: ${appState.accounts?.[appState.master]?.label}\n` +
-    `This will copy to all enabled follower accounts.`
-  );
-  if (!confirmed) return;
-
-  await fetch(`${API}/api/place_order`, {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({instrument, direction, order_type, contracts,
-                          limit_price, stop_price, trail_pts})
-  });
-  await poll();
+  const subCount = Object.keys(g.subs || {}).length;
+  if (!confirm(`${direction} ${contracts}x ${instrument} (${order_type})\nGroup: ${g.name}\nMaster ${acctLabel(g.master)} + ${subCount} sub(s)`)) return;
+  await post("/api/place_order", {group_id: gid, instrument, direction, order_type,
+                                  contracts, limit_price, stop_price, trail_pts});
 }
 
 async function emergencyStop() {
   if (!confirm("EMERGENCY FLATTEN ALL POSITIONS on ALL accounts?")) return;
-  await fetch(`${API}/api/emergency`, {
-    method: "POST", headers: {"Content-Type":"application/json"}, body: "{}"
-  });
-  await poll();
+  await post("/api/emergency", {});
 }
 
 function esc(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-}
-
-// ═══════════════════════════════════════════════════════════
-// ACCOUNT CONTROLS — kill switch + daily loss/win limits (Handoff #31)
-// ═══════════════════════════════════════════════════════════
-const FIRM_LABELS = { mffu: "MYFUNDEDFUTURES (MFFU)", personal: "PERSONAL / AMP", lucid: "LUCID TRADING" };
-function firmLabel(set) { return FIRM_LABELS[set] || String(set || "OTHER").toUpperCase(); }
-
-function ctrlFor(key) {
-  return (appState.account_controls || {})[key]
-      || { kill_switch: true, max_loss: 0, max_win: 0, day_pnl: 0, halted_reason: null };
-}
-
-function pnlClass(v) { return v > 0 ? "pos" : v < 0 ? "neg" : "flat"; }
-function pnlText(v)  { const n = Number(v || 0); return (n >= 0 ? "+$" : "-$") + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
-
-function openControls() {
-  renderControls();
-  document.getElementById("controls-modal").classList.add("open");
-}
-function closeControls() {
-  document.getElementById("controls-modal").classList.remove("open");
-}
-
-function renderControls() {
-  const body = document.getElementById("controls-body");
-  const accounts = appState.accounts || {};
-  if (!Object.keys(accounts).length) { body.innerHTML = "<div style='color:var(--muted);font-size:11px;'>No accounts.</div>"; return; }
-
-  // group accounts by prop firm (credential_set)
-  const groups = {};
-  for (const [key, a] of Object.entries(accounts)) {
-    const set = a.credential_set || "other";
-    (groups[set] = groups[set] || []).push([key, a]);
-  }
-
-  body.innerHTML = Object.entries(groups).map(([set, items]) => `
-    <div class="ctrl-firm-group">// ${firmLabel(set)}</div>
-    ${items.map(([key, a]) => {
-      const c = ctrlFor(key);
-      const halted = c.kill_switch === false;
-      const pnl = Number(c.day_pnl || 0);
-      return `
-      <div class="ctrl-row ${halted ? 'is-halted' : ''}" id="ctrl-row-${key}">
-        <div class="ctrl-acct-name">
-          <span>${esc(a.label)}</span>
-          <span class="ctrl-kill">
-            <span class="ratio-label">KILL SWITCH</span>
-            <label class="toggle-sm">
-              <input type="checkbox" id="kill-${key}" ${c.kill_switch ? "checked" : ""}
-                onchange="saveControl('${key}')">
-              <span class="slider-sm"></span>
-            </label>
-          </span>
-        </div>
-        <div class="ctrl-fields">
-          <div class="ctrl-field">
-            <span class="ctrl-field-label">MAX DAILY LOSS ($, 0=off)</span>
-            <input type="number" class="ctrl-input" id="maxloss-${key}" min="0" step="50" value="${Number(c.max_loss||0)}">
-          </div>
-          <div class="ctrl-field">
-            <span class="ctrl-field-label">MAX DAILY WIN ($, 0=off)</span>
-            <input type="number" class="ctrl-input" id="maxwin-${key}" min="0" step="50" value="${Number(c.max_win||0)}">
-          </div>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <span class="ctrl-field-label">CURRENT DAY P&amp;L</span>
-          <span class="ctrl-pnl ${pnlClass(pnl)}" id="pnl-${key}">${pnlText(pnl)}</span>
-        </div>
-        <div class="ctrl-row-actions">
-          <button class="ctrl-save" onclick="saveControl('${key}')">💾 SAVE</button>
-          <button class="ctrl-reset" onclick="resetDay('${key}')">↺ RESET DAY</button>
-        </div>
-      </div>`;
-    }).join("")}
-  `).join("");
-}
-
-// Update only P&L + halt visuals on poll — never rebuild inputs (keeps typing)
-function updateControlsLive() {
-  for (const [key] of Object.entries(appState.accounts || {})) {
-    const c = ctrlFor(key);
-    const pnlEl = document.getElementById(`pnl-${key}`);
-    if (pnlEl) { const v = Number(c.day_pnl || 0); pnlEl.textContent = pnlText(v); pnlEl.className = `ctrl-pnl ${pnlClass(v)}`; }
-    const row = document.getElementById(`ctrl-row-${key}`);
-    if (row) row.classList.toggle("is-halted", c.kill_switch === false);
-    const kill = document.getElementById(`kill-${key}`);
-    if (kill && document.activeElement !== kill) kill.checked = !!c.kill_switch;
-  }
-}
-
-async function saveControl(key) {
-  const kill   = document.getElementById(`kill-${key}`).checked;
-  const maxLoss = parseFloat(document.getElementById(`maxloss-${key}`).value) || 0;
-  const maxWin  = parseFloat(document.getElementById(`maxwin-${key}`).value) || 0;
-  await fetch(`${API}/api/copier/account_controls`, {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({account_id: key, kill_switch: kill, max_loss: maxLoss, max_win: maxWin})
-  });
-  await poll();
-}
-
-async function resetDay(key) {
-  if (!confirm(`Reset day for ${appState.accounts?.[key]?.label || key}?\nClears halt state and zeroes day P&L, re-enabling the account.`)) return;
-  await fetch(`${API}/api/copier/reset_day`, {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({account_id: key})
-  });
-  await poll();
-  renderControls();
 }
 </script>
 </body>
