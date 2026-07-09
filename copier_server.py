@@ -189,10 +189,26 @@ def hhmmss():
 #
 # Accounts are NO LONGER hardcoded — they are pulled live from the bot's real,
 # broker-discovered set via the read-only view (:7333), see refresh_accounts().
+# Known strategy signals (the bot's 5 strategies). Groups and standalone accounts
+# subscribe to these tags; an incoming signal routes only to its subscribers.
+# Unknown tags arriving on /api/signal are auto-registered so custom TradingView
+# alerts show up in the UI too.
+SEED_SIGNALS = [
+    {"tag": "sweep_reverse", "label": "Sweep & Reverse"},
+    {"tag": "box_mr_london", "label": "Box MR London"},
+    {"tag": "box_mr_power",  "label": "Box MR Power Hour"},
+    {"tag": "momentum_nq",   "label": "Momentum NQ"},
+    {"tag": "momentum_es",   "label": "Momentum ES"},
+]
+
 DEFAULT_STATE = {
     "emergency": False,
-    "groups": [],            # list of group dicts (see above)
+    "groups": [],            # list of group dicts (see above); each has "signals": [tag]
     "next_group": 1,         # monotonic counter for group ids
+    "signals": [dict(s) for s in SEED_SIGNALS],   # known strategy tags {tag,label}
+    # Standalone accounts subscribed to signals directly (no group). Each trades
+    # its OWN fixed contract size when a subscribed signal fires.
+    "signal_accounts": {},   # {account_key: {"enabled": bool, "contracts": int, "signals": [tag]}}
     "accounts": {},          # {account_key: {label, credential_set, live_balance, rules}} — from the bot
     "instruments": {
         "NQ":  {"name": "Nasdaq Futures", "category": "Futures", "tick": 0.25, "tick_value": 5.0},
@@ -220,8 +236,12 @@ def load_state():
             s.setdefault("accounts", {})
             s.setdefault("groups", [])
             s.setdefault("next_group", len(s.get("groups", [])) + 1)
+            s.setdefault("signals", [dict(x) for x in SEED_SIGNALS])
+            s.setdefault("signal_accounts", {})
             s.setdefault("orders", []); s.setdefault("log", []); s.setdefault("positions", {})
             s.setdefault("account_controls", {})  # Handoff #31
+            for g in s["groups"]:
+                g.setdefault("signals", [])   # per-group strategy subscriptions
             # Drop the retired flat master/followers model if an old state file has it.
             s.pop("master", None); s.pop("followers", None)
             return s
@@ -550,7 +570,7 @@ def place_order_account(account_key, order):
 
 
 def place_order_all(order):
-    """Fan a signal out to EVERY enabled group with a master (webhook path)."""
+    """Fan a signal out to EVERY enabled group with a master (untagged webhook path)."""
     active = [g for g in STATE.get("groups", []) if g.get("enabled") and g.get("master")]
     if not active:
         log("Webhook signal ignored — no enabled group with a master", "WARN")
@@ -559,6 +579,41 @@ def place_order_all(order):
     for g in active:
         all_results += place_order_group(g, order).get("results", [])
     return {"ok": True, "results": all_results}
+
+
+def _register_signal(tag):
+    """Ensure an incoming strategy tag is in the known-signals list (for the UI)."""
+    if not tag:
+        return
+    if not any(s.get("tag") == tag for s in STATE.get("signals", [])):
+        STATE.setdefault("signals", []).append({"tag": tag, "label": tag})
+
+
+def route_signal(strategy, order):
+    """Route a tagged strategy signal to everything subscribed to that tag:
+      • each ENABLED group whose 'signals' includes the tag  → master + subs (by ratio)
+      • each ENABLED standalone account subscribed to the tag → that account, at ITS
+        OWN fixed contract size (ignores the signal's size).
+    Groups and standalone subscriptions are independent — an account can be a
+    group sub AND a standalone subscriber; that's the operator's choice."""
+    with _LOCK:
+        _register_signal(strategy)
+        groups = [g for g in STATE.get("groups", [])
+                  if g.get("enabled") and g.get("master") and strategy in (g.get("signals") or [])]
+        singles = [(k, cfg) for k, cfg in STATE.get("signal_accounts", {}).items()
+                   if cfg.get("enabled") and strategy in (cfg.get("signals") or []) and k in STATE["accounts"]]
+    if not groups and not singles:
+        log(f"Signal '{strategy}' — no subscribers", "WARN")
+        return {"ok": True, "results": [], "msg": "no subscribers"}
+    results = []
+    for g in groups:
+        results += place_order_group(g, order).get("results", [])
+    for k, cfg in singles:
+        aorder = dict(order)
+        aorder["contracts"] = max(1, int(cfg.get("contracts", 1) or 1))   # own fixed size
+        results += place_order_account(k, aorder).get("results", [])
+    log(f"Signal '{strategy}' routed → {len(groups)} group(s) + {len(singles)} account(s)")
+    return {"ok": True, "results": results, "strategy": strategy}
 
 
 def emergency_flatten():
@@ -634,7 +689,7 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/api/add_group"):
                 name = (b.get("name") or "").strip() or f"Group {STATE['next_group']}"
                 gid  = f"g{STATE['next_group']}"; STATE["next_group"] += 1
-                STATE["groups"].append({"id": gid, "name": name, "enabled": True, "master": None, "subs": {}})
+                STATE["groups"].append({"id": gid, "name": name, "enabled": True, "master": None, "subs": {}, "signals": []})
                 log(f"Group created: {name}"); save_state()
                 return self._send(200, {"ok": True, "id": gid})
             if p.startswith("/api/remove_group"):
@@ -670,12 +725,45 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"Group '{g['name']}' sub {_acct_short(k)}: ratio={ratio}x")
                 save_state()
                 return self._send(200, {"ok": True})
+            if p.startswith("/api/set_group_signals"):   # which strategies a group trades
+                g = get_group(b.get("id"))
+                if not g: return self._send(404, {"ok": False, "msg": "group not found"})
+                known = {s["tag"] for s in STATE.get("signals", [])}
+                g["signals"] = [t for t in (b.get("signals") or []) if t in known]
+                log(f"Group '{g['name']}' signals: {', '.join(g['signals']) or 'none'}"); save_state()
+                return self._send(200, {"ok": True})
             if p.startswith("/api/set_group"):   # meta: name / enabled
                 g = get_group(b.get("id"))
                 if not g: return self._send(404, {"ok": False, "msg": "group not found"})
                 if "name" in b:    g["name"] = (b.get("name") or g["name"]).strip() or g["name"]
                 if "enabled" in b: g["enabled"] = bool(b.get("enabled"))
                 log(f"Group '{g['name']}': enabled={g['enabled']}"); save_state()
+                return self._send(200, {"ok": True})
+            # Standalone account signal subscription (trades its own fixed size)
+            if p.startswith("/api/set_signal_account"):
+                k = b.get("account_key")
+                if not k or k not in STATE["accounts"]:
+                    return self._send(400, {"ok": False, "msg": "unknown account"})
+                sa = STATE.setdefault("signal_accounts", {})
+                if b.get("remove"):
+                    sa.pop(k, None); log(f"Signal account removed: {_acct_short(k)}"); save_state()
+                    return self._send(200, {"ok": True})
+                cur = sa.setdefault(k, {"enabled": True, "contracts": 1, "signals": []})
+                if "enabled" in b:   cur["enabled"] = bool(b.get("enabled"))
+                if "contracts" in b: cur["contracts"] = max(1, int(b.get("contracts", 1) or 1))
+                if "signals" in b:
+                    known = {s["tag"] for s in STATE.get("signals", [])}
+                    cur["signals"] = [t for t in (b.get("signals") or []) if t in known]
+                log(f"Signal account {_acct_short(k)}: {'ON' if cur['enabled'] else 'OFF'} "
+                    f"{cur['contracts']}x [{', '.join(cur['signals']) or 'none'}]"); save_state()
+                return self._send(200, {"ok": True, "config": cur})
+            # Register a custom strategy tag (so it can be subscribed to in the UI)
+            if p.startswith("/api/add_signal"):
+                tag = (b.get("tag") or "").strip()
+                if not tag: return self._send(400, {"ok": False, "msg": "missing tag"})
+                if not any(s["tag"] == tag for s in STATE["signals"]):
+                    STATE["signals"].append({"tag": tag, "label": (b.get("label") or tag).strip()})
+                    log(f"Signal registered: {tag}"); save_state()
                 return self._send(200, {"ok": True})
             if p.startswith("/api/clear_emergency"):
                 STATE["emergency"] = False; log("Emergency cleared"); save_state()
@@ -723,9 +811,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, place_order_group(g, order))
         if p.startswith("/api/emergency"):
             return self._send(200, emergency_flatten())
+        # Strategy signal from the bot (or a tagged TradingView alert) — routes to
+        # groups + standalone accounts subscribed to the signal's strategy tag.
+        if p.startswith("/api/signal"):
+            strategy = (b.get("strategy") or b.get("strat") or "").strip()
+            if not strategy:
+                return self._send(400, {"ok": False, "msg": "missing strategy"})
+            return self._send(200, route_signal(strategy, _normalize_order(b)))
         if p.startswith("/webhook/tradingview"):
             log("TradingView webhook received")
-            return self._send(200, place_order_all(_normalize_order(b)))
+            strategy = (b.get("strategy") or b.get("strat") or "").strip()
+            order = _normalize_order(b)
+            # Tagged alert → subscription routing; untagged → all enabled groups.
+            return self._send(200, route_signal(strategy, order) if strategy else place_order_all(order))
         self._send(404, {"error": "not found"})
 
 
@@ -743,6 +841,6 @@ if __name__ == "__main__":
     refresh_accounts(force=True)
     if not STATE["groups"]:
         gid = f"g{STATE['next_group']}"; STATE["next_group"] += 1
-        STATE["groups"].append({"id": gid, "name": "Group 1", "enabled": True, "master": None, "subs": {}})
+        STATE["groups"].append({"id": gid, "name": "Group 1", "enabled": True, "master": None, "subs": {}, "signals": []})
         save_state()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

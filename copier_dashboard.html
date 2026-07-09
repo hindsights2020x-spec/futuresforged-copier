@@ -64,6 +64,11 @@ header{display:flex;align-items:center;justify-content:space-between;border-bott
 .g-num{width:52px;text-align:center;}
 .g-lbl{font-size:9px;color:var(--muted);letter-spacing:1px;}
 .g-subhdr{font-size:9px;letter-spacing:2px;color:var(--muted);margin:10px 0 2px;}
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;}
+.chip{font-size:9px;letter-spacing:1px;padding:3px 8px;border:1px solid var(--border);cursor:pointer;color:var(--muted);user-select:none;}
+.chip.on{border-color:var(--accent);color:var(--accent);background:rgba(0,212,255,.08);}
+.sa-row{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid rgba(14,42,58,.5);flex-wrap:wrap;}
+.sa-row:last-child{border-bottom:none;}
 .g-name-cell{font-size:11px;}
 
 /* ORDER ENTRY */
@@ -174,6 +179,12 @@ footer{text-align:center;font-size:10px;color:var(--muted);padding:20px 0 10px;l
         <button class="btn acc" onclick="addGroup()">+ NEW GROUP</button>
       </div>
       <div id="groups-list"><div class="muted-note">No groups yet — create one.</div></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">🎯 SIGNAL ACCOUNTS (STANDALONE)</div>
+      <div class="muted-note" style="text-align:left;padding:0 0 8px;">Trade a strategy on a single account (no group), at its own fixed size.</div>
+      <div id="signal-accounts"><div class="muted-note">—</div></div>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -302,12 +313,35 @@ function render() {
   renderInstruments();
   renderAccounts();
   renderGroups();
+  renderSignalAccounts();
   renderOrderGroupSelect();
   renderOrders();
   renderLog();
   updatePreview();
   document.getElementById("estop-btn").className =
     appState.emergency ? "estop-btn active" : "estop-btn";
+}
+
+// ── Signal-subscription actions ─────────────────────────────
+function _toggleTag(list, tag) {
+  const s = new Set(list || []);
+  s.has(tag) ? s.delete(tag) : s.add(tag);
+  return [...s];
+}
+function toggleGroupSignal(gid, tag) {
+  const g = (appState.groups || []).find(x => x.id === gid);
+  if (!g) return;
+  post("/api/set_group_signals", { id: gid, signals: _toggleTag(g.signals, tag) });
+}
+function toggleAcctSignal(key, tag) {
+  const cfg = (appState.signal_accounts || {})[key] || { signals: [] };
+  post("/api/set_signal_account", { account_key: key, signals: _toggleTag(cfg.signals, tag) });
+}
+function toggleAcctEnabled(key, enabled) {
+  post("/api/set_signal_account", { account_key: key, enabled });
+}
+function setAcctContracts(key, contracts) {
+  post("/api/set_signal_account", { account_key: key, contracts: parseInt(contracts) || 1 });
 }
 
 function acctLabel(key) {
@@ -429,7 +463,42 @@ function renderGroups() {
           </select>
           <button class="btn acc" onclick="addSub('${g.id}')">ADD</button>
         </div>
+
+        <div class="g-subhdr">SUBSCRIBED STRATEGIES</div>
+        <div class="chips">${sigChips(g.signals || [], "grp", g.id)}</div>
       </div>`;
+  }).join("");
+}
+
+// Render strategy chips. kind='grp' → toggleGroupSignal(id,tag); kind='acct' → toggleAcctSignal(id,tag).
+function sigChips(active, kind, id) {
+  const set = new Set(active);
+  return (appState.signals || []).map(s => {
+    const fn = kind === "grp" ? "toggleGroupSignal" : "toggleAcctSignal";
+    return `<span class="chip ${set.has(s.tag) ? "on" : ""}" onclick="${fn}('${id}','${s.tag}')">${esc(s.label)}</span>`;
+  }).join("");
+}
+
+// Standalone signal accounts — each trades a strategy on its own, own fixed size.
+function renderSignalAccounts() {
+  const el = document.getElementById("signal-accounts");
+  if (!el) return;
+  const accts = appState.accounts || {};
+  const keys = Object.keys(accts);
+  if (!keys.length) { el.innerHTML = `<div class="muted-note">No accounts</div>`; return; }
+  const sa = appState.signal_accounts || {};
+  el.innerHTML = keys.map(k => {
+    const cfg = sa[k] || { enabled: false, contracts: 1, signals: [] };
+    const on = cfg.enabled;
+    return `
+      <div class="sa-row" style="opacity:${on ? 1 : 0.6};">
+        <button class="btn ${on ? "acc" : ""}" onclick="toggleAcctEnabled('${k}', ${!on})">${on ? "ON" : "OFF"}</button>
+        <span class="g-name-cell grow">${esc(accts[k].label)}</span>
+        <span class="g-lbl">SIZE</span>
+        <input class="g-num" type="number" min="1" max="50" value="${cfg.contracts || 1}"
+          onchange="setAcctContracts('${k}', this.value)">
+      </div>
+      <div class="chips" style="margin:0 0 8px;">${sigChips(cfg.signals || [], "acct", k)}</div>`;
   }).join("");
 }
 
