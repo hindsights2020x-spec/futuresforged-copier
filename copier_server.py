@@ -391,9 +391,79 @@ def _route_to(account_key, order):
     return r, pnl
 
 
+# ---------------------------------------------------------------------------
+# Order-input normalization (durable boundary fix — ports futuresforged-bot PR #9
+# into the copier that actually serves :7332). Every order-placing client speaks a
+# different vocabulary: Chart Studio sends BUY/SELL + MKT/LMT/STP, the copier
+# dashboard sends LONG/SHORT + full names, TradingView varies. submit_order() keys
+# off direction in ("LONG","BUY") and order_type "market"/"limit"/"stopmarket", so
+# an unmapped value silently mis-fires (a "MKT" fell through to "unsupported
+# order_type" and failed closed; a bad direction defaulted to SELL). Canonicalize
+# once here so no client can drift the contract, and fail LOUD (HTTP 400) instead
+# of the old silent ok:true. No sizing change — `contracts` is placed verbatim and
+# ratio'd per follower downstream, exactly as before.
+# ---------------------------------------------------------------------------
+_DIRECTION_ALIASES = {
+    "BUY": "LONG",  "B": "LONG",  "LONG": "LONG",  "L": "LONG",
+    "SELL": "SHORT", "S": "SHORT", "SHORT": "SHORT",
+}
+_ORDER_TYPE_ALIASES = {
+    "MKT": "Market", "MARKET": "Market",
+    "LMT": "Limit", "LIMIT": "Limit",
+    "STP": "Stop Market", "STOP": "Stop Market", "STOP MARKET": "Stop Market", "STOPMARKET": "Stop Market",
+    "STPLMT": "Stop Limit", "STOP LIMIT": "Stop Limit", "STOPLIMIT": "Stop Limit",
+    "TRAIL": "Trailing Stop", "TRAILING": "Trailing Stop", "TRAILING STOP": "Trailing Stop", "TRAILINGSTOP": "Trailing Stop",
+}
+
+def canon_direction(value):
+    """Map any accepted direction alias to 'LONG'/'SHORT'; None if unrecognised."""
+    return _DIRECTION_ALIASES.get(str(value or "").strip().upper())
+
+def canon_order_type(value):
+    """Map any accepted order-type alias to a canonical value; None if unrecognised."""
+    return _ORDER_TYPE_ALIASES.get(str(value or "").strip().upper())
+
+def normalize_order(order):
+    """Canonicalize + validate an inbound order at the boundary. Returns
+    (normalized_order, None) on success or (None, error_msg) on bad input so the
+    caller can fail loud (HTTP 400). Accepts Chart Studio's `side` (BUY/SELL) as
+    well as `direction`. Does NOT size: `contracts` is coerced to a positive int
+    and placed verbatim (per-follower ratio is applied later in place_order)."""
+    o = dict(order)
+    direction = canon_direction(o.get("direction") or o.get("side"))
+    if direction is None:
+        return None, f"Invalid direction: {(o.get('direction') or o.get('side'))!r}"
+    order_type = canon_order_type(o.get("order_type", "Market"))
+    if order_type is None:
+        return None, f"Invalid order type: {o.get('order_type')!r}"
+    try:
+        contracts = max(1, int(o.get("contracts", 1)))
+    except (TypeError, ValueError):
+        return None, f"Invalid contracts: {o.get('contracts')!r}"
+    limit_price = o.get("limit_price")
+    stop_price  = o.get("stop_price")
+    if order_type in ("Limit", "Stop Limit") and not limit_price:
+        return None, "Limit price required"
+    if order_type in ("Stop Market", "Stop Limit") and not stop_price:
+        return None, "Stop price required"
+    if order_type == "Trailing Stop" and not o.get("trail_pts"):
+        return None, "Trail points required"
+    o["direction"]  = direction
+    o["order_type"] = order_type
+    o["contracts"]  = contracts
+    o["instrument"] = str(o.get("instrument") or "NQ").upper()
+    return o, None
+
+
 def place_order(order):
-    """Place on master, then copy to each enabled follower applying ratio + instrument override."""
+    """Place on master, then copy to each enabled follower applying ratio + instrument override.
+    Expects a boundary-normalized order (see normalize_order); re-normalizes defensively so a
+    direct/legacy caller can't inject a raw vocabulary and mis-fire."""
     with _LOCK:
+        order, err = normalize_order(order)
+        if err:
+            log(f"Order rejected — {err}", "WARN")
+            return {"ok": False, "results": [], "msg": err}
         if STATE.get("emergency"):
             log("Order blocked — emergency stop active", "WARN")
             return {"ok": False, "results": [], "msg": "emergency active"}
@@ -543,12 +613,20 @@ class Handler(BaseHTTPRequestHandler):
                 save_state()
                 return self._send(200, {"ok": True, "controls": c})
         if p.startswith("/api/place_order"):
-            return self._send(200, place_order(b))
+            norm, err = normalize_order(b)
+            if err:
+                # Fail LOUD — the old handler returned ok:true even when nothing
+                # executed, so bad input (e.g. Chart Studio "MKT") was invisible.
+                return self._send(400, {"ok": False, "results": [], "msg": err})
+            return self._send(200, place_order(norm))
         if p.startswith("/api/emergency"):
             return self._send(200, emergency_flatten())
         if p.startswith("/webhook/tradingview"):
             log("TradingView webhook received")
-            return self._send(200, place_order(b))
+            norm, err = normalize_order(b)
+            if err:
+                return self._send(400, {"ok": False, "results": [], "msg": err})
+            return self._send(200, place_order(norm))
         self._send(404, {"error": "not found"})
 
 
