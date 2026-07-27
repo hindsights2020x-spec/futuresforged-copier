@@ -108,6 +108,20 @@ def fetch_bars(root, interval):
     return [buckets[k] for k in sorted(order)]
 
 
+def fetch_book(root):
+    """Phase 1 (#1) — proxy ff-bot's live L2 order book via the :7333 read-only view,
+    so the copier is a single front-door for the client's order-flow panel. Returns the
+    bot's /api/book shape UNCHANGED: {bids:[[px,sz]...], asks:[...], mid} — or the bot's
+    {ok:false, message:...} when the depth digester (SENSORY_V2_DEPTH) is off. Micros map
+    to their full-size book (MNQ->NQ, MES->ES), matching the bars/L2 mapping above."""
+    root = (root or "NQ").upper()
+    sym  = _BARS_ROOT_MAP.get(root, "NQ")
+    qs   = urllib.parse.urlencode({"symbol": sym, "k": _bars_token()})
+    url  = f"{BARS_SOURCE}/api/book?{qs}"
+    with urllib.request.urlopen(url, timeout=4) as r:
+        return json.loads(r.read() or b"{}")
+
+
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -143,6 +157,13 @@ DEFAULT_STATE = {
     # True=active / False=halted. Enforced server-side as an EXTRA fail-closed
     # gate before any order routes to an account (see _route_to / _account_active).
     "account_controls": {},  # account_key -> {kill_switch, max_loss, max_win, day_pnl, day_key, halted_reason}
+    # Phase 1 — copier trading groups. Each: {id, name, enabled, master(account_key|None),
+    # subs:{account_key:{ratio}}, signals:[tag,...]}. A group fans a master's order out to
+    # its subs (copy-trade); place_order routes by group_id. Empty by default.
+    "groups": [],
+    # Phase 1 — per-account signal routing config (dashboard GROUPS tab). Config storage
+    # only for now; signal-DRIVEN auto-routing (strategy tag -> group) is not yet wired.
+    "signal_accounts": {},  # account_key -> {enabled, contracts, signals:[]}
     "log": [{"ts": hhmmss(), "level": "INFO", "msg": "Session started"}],
 }
 
@@ -156,6 +177,8 @@ def load_state():
                 s.setdefault(k, DEFAULT_STATE[k])
             s.setdefault("orders", []); s.setdefault("log", []); s.setdefault("positions", {})
             s.setdefault("account_controls", {})  # Handoff #31
+            s.setdefault("groups", [])            # Phase 1 — copier groups
+            s.setdefault("signal_accounts", {})   # Phase 1 — signal-account routing config
             return s
         except Exception:
             pass
@@ -392,6 +415,24 @@ def _route_to(account_key, order):
 
 
 # ---------------------------------------------------------------------------
+# Phase 1 — copier trading groups (helpers). A group fans a master's order out to
+# its subs (copy-trade). CRUD routes live in do_POST; routing lives in place_order.
+# ---------------------------------------------------------------------------
+def _new_group_id():
+    existing = {g.get("id") for g in STATE.get("groups", [])}
+    while True:
+        gid = "g_" + format(random.randint(0, 0xffffff), "06x")
+        if gid not in existing:
+            return gid
+
+def _find_group(gid):
+    for g in STATE.get("groups", []):
+        if g.get("id") == gid:
+            return g
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Order-input normalization (durable boundary fix — ports futuresforged-bot PR #9
 # into the copier that actually serves :7332). Every order-placing client speaks a
 # different vocabulary: Chart Studio sends BUY/SELL + MKT/LMT/STP, the copier
@@ -467,13 +508,32 @@ def place_order(order):
         if STATE.get("emergency"):
             log("Order blocked — emergency stop active", "WARN")
             return {"ok": False, "results": [], "msg": "emergency active"}
-        master = STATE["master"]
+
+        # Routing target: a specific group (group_id) fans out to that group's master
+        # + subs; otherwise the global master + enabled followers (legacy behavior).
+        gid = order.get("group_id")
+        if gid:
+            g = _find_group(gid)
+            if not g:
+                log(f"Order rejected — unknown group '{gid}'", "WARN")
+                return {"ok": False, "results": [], "msg": f"unknown group '{gid}'"}
+            if not g.get("enabled", True):
+                log(f"Order blocked — group '{g.get('name', gid)}' disabled", "WARN")
+                return {"ok": False, "results": [], "msg": f"group '{g.get('name', gid)}' disabled"}
+            master = g.get("master")
+            if not master:
+                return {"ok": False, "results": [], "msg": f"group '{g.get('name', gid)}' has no master"}
+            follower_items = list((g.get("subs") or {}).items())   # subs: {key: {ratio}}
+            ctx = f"group '{g.get('name', gid)}'"
+        else:
+            master = STATE["master"]
+            follower_items = [(k, c) for k, c in STATE["followers"].items() if c.get("enabled")]
+            ctx = "global"
+
         results = []
         r, m_pnl = _route_to(master, order)
         results.append({"role": "master", "account": _acct_short(master), "ok": r["ok"], "msg": r["msg"], "pnl": m_pnl})
-        for fk, fcfg in STATE["followers"].items():
-            if not fcfg.get("enabled"):
-                continue
+        for fk, fcfg in follower_items:
             contracts = max(1, round(order["contracts"] * float(fcfg.get("ratio", 1.0))))
             forder = dict(order)
             forder["contracts"] = contracts
@@ -484,11 +544,12 @@ def place_order(order):
         STATE["orders"].insert(0, {
             "dt": now_iso(), "instrument": order["instrument"], "direction": order["direction"],
             "order_type": order["order_type"], "contracts": order["contracts"],
+            "group_id": gid,
             "pnl": m_pnl,   # per-trade realized P&L (master): null on opening orders, $ on closing trades
             "results": results,
         })
         STATE["orders"] = STATE["orders"][:100]
-        log(f"Order placed: {order['direction']} {order['contracts']}x {order['instrument']}")
+        log(f"Order placed ({ctx}): {order['direction']} {order['contracts']}x {order['instrument']}")
         save_state()
         return {"ok": True, "results": results}
 
@@ -552,6 +613,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(200, {"root": root, "interval": str(interval),
                                  "bars": [], "count": 0, "error": str(e)})
+        elif self.path.startswith("/api/book"):
+            # Phase 1 (#1) — live L2 order book, proxied from ff-bot via :7333. Accepts
+            # ?symbol= (client Chart Studio) or ?root= (dashboard). Returns the bot's
+            # /api/book shape unchanged so the client's renderL2() works as-is.
+            q    = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            root = (q.get("symbol", q.get("root", ["NQ"]))[0] or "NQ").upper()
+            try:
+                self._send(200, fetch_book(root))
+            except Exception as e:
+                self._send(200, {"ok": False, "bids": [], "asks": [], "error": str(e)})
         elif self.path in ("/", "/index.html") and os.path.exists(DASHBOARD):
             with open(DASHBOARD, "rb") as f:
                 self._send(200, f.read(), "text/html; charset=utf-8")
@@ -612,6 +683,77 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"Reset day {_acct_short(k)} — halt cleared, re-enabled")
                 save_state()
                 return self._send(200, {"ok": True, "controls": c})
+            # ── Phase 1 — copier trading groups (create / delete / configure) ──
+            if p.startswith("/api/add_group"):
+                gid = _new_group_id()
+                name = (b.get("name") or f"Group {len(STATE.get('groups', [])) + 1}").strip() or "Group"
+                g = {"id": gid, "name": name, "enabled": True,
+                     "master": None, "subs": {}, "signals": []}
+                STATE.setdefault("groups", []).append(g)
+                log(f"Group created: {name}"); save_state()
+                return self._send(200, {"ok": True, "id": gid, "group": g})
+            if p.startswith("/api/remove_group"):
+                gid = b.get("id")
+                before = len(STATE.get("groups", []))
+                STATE["groups"] = [g for g in STATE.get("groups", []) if g.get("id") != gid]
+                if len(STATE["groups"]) == before:
+                    return self._send(400, {"ok": False, "msg": "unknown group"})
+                log(f"Group removed: {gid}"); save_state()
+                return self._send(200, {"ok": True})
+            # NOTE: the specific set_group_* routes MUST precede the generic set_group
+            # below — startswith("/api/set_group") would otherwise swallow them.
+            if p.startswith("/api/set_group_master"):
+                g = _find_group(b.get("id"))
+                if not g: return self._send(400, {"ok": False, "msg": "unknown group"})
+                k = b.get("account_key")
+                if k not in STATE["accounts"]:
+                    return self._send(400, {"ok": False, "msg": "unknown account"})
+                g["master"] = k; log(f"Group {g['name']} master: {_acct_short(k)}"); save_state()
+                return self._send(200, {"ok": True, "group": g})
+            if p.startswith("/api/set_group_sub"):
+                g = _find_group(b.get("id"))
+                if not g: return self._send(400, {"ok": False, "msg": "unknown group"})
+                k = b.get("account_key")
+                if not k: return self._send(400, {"ok": False, "msg": "missing account_key"})
+                subs = g.setdefault("subs", {})
+                if b.get("remove"):
+                    subs.pop(k, None); log(f"Group {g['name']} sub removed: {_acct_short(k)}")
+                else:
+                    if k not in STATE["accounts"]:
+                        return self._send(400, {"ok": False, "msg": "unknown account"})
+                    try: ratio = float(b.get("ratio", 1.0))
+                    except (TypeError, ValueError): ratio = 1.0
+                    subs[k] = {"ratio": ratio}
+                    log(f"Group {g['name']} sub {_acct_short(k)} x{ratio}")
+                save_state(); return self._send(200, {"ok": True, "group": g})
+            if p.startswith("/api/set_group_signals"):
+                g = _find_group(b.get("id"))
+                if not g: return self._send(400, {"ok": False, "msg": "unknown group"})
+                sigs = b.get("signals")
+                g["signals"] = list(sigs) if isinstance(sigs, list) else []
+                save_state(); return self._send(200, {"ok": True, "group": g})
+            if p.startswith("/api/set_group"):
+                g = _find_group(b.get("id"))
+                if not g: return self._send(400, {"ok": False, "msg": "unknown group"})
+                if b.get("name") is not None:
+                    g["name"] = str(b["name"]).strip() or g["name"]
+                if "enabled" in b:
+                    g["enabled"] = bool(b["enabled"])
+                log(f"Group updated: {g['name']} (enabled={g.get('enabled', True)})"); save_state()
+                return self._send(200, {"ok": True, "group": g})
+            # Signal-account config storage (dashboard GROUPS tab). Persist only —
+            # signal-DRIVEN auto-routing is not yet wired (needs the bot->copier feed).
+            if p.startswith("/api/set_signal_account"):
+                k = b.get("account_key")
+                if not k: return self._send(400, {"ok": False, "msg": "missing account_key"})
+                sa = STATE.setdefault("signal_accounts", {})
+                cfg = sa.setdefault(k, {"enabled": False, "contracts": 1, "signals": []})
+                if "enabled" in b: cfg["enabled"] = bool(b["enabled"])
+                if "contracts" in b:
+                    try: cfg["contracts"] = max(1, int(b["contracts"]))
+                    except (TypeError, ValueError): pass
+                if isinstance(b.get("signals"), list): cfg["signals"] = list(b["signals"])
+                save_state(); return self._send(200, {"ok": True, "config": cfg})
         if p.startswith("/api/place_order"):
             norm, err = normalize_order(b)
             if err:
