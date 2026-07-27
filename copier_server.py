@@ -754,6 +754,38 @@ class Handler(BaseHTTPRequestHandler):
                     except (TypeError, ValueError): pass
                 if isinstance(b.get("signals"), list): cfg["signals"] = list(b["signals"])
                 save_state(); return self._send(200, {"ok": True, "config": cfg})
+            # ── Phase 2 — bot -> copier account sync (bot = source of truth) ──
+            # The bot discovers accounts + refreshes balances (it holds the broker
+            # sessions; the copier must not double-connect — single-session rule) and
+            # pushes them here. DISPLAY/AVAILABILITY sync only: execution routing stays
+            # separately gated (COPIER_LIVE + COPIER_LIVE_ROUTES + blocked-broker list).
+            if p.startswith("/api/sync_accounts_from_bot"):
+                incoming = b.get("accounts")
+                if not isinstance(incoming, dict):
+                    return self._send(400, {"ok": False, "msg": "accounts dict required"})
+                accts = STATE.setdefault("accounts", {})
+                # Bot is truth for its OWN accounts: drop bot-sourced entries no longer
+                # pushed. Copier-only accounts (source != 'bot') are preserved.
+                for k in [k for k, v in list(accts.items())
+                          if (v or {}).get("source") == "bot" and k not in incoming]:
+                    accts.pop(k, None)
+                for k, v in incoming.items():
+                    v = v or {}
+                    entry = accts.get(k, {})
+                    entry.update({
+                        "label":          v.get("label", entry.get("label", k)),
+                        "credential_set": v.get("credential_set", entry.get("credential_set", "")),
+                        "live_balance":   v.get("live_balance", entry.get("live_balance")),
+                        "rules":          v.get("rules", entry.get("rules", {})),
+                        "source":         "bot",
+                        "synced_at":      now_iso(),
+                    })
+                    if "enabled" in v:
+                        entry["enabled"] = bool(v["enabled"])
+                    accts[k] = entry
+                log(f"Accounts synced from bot: {len(incoming)}")
+                save_state()
+                return self._send(200, {"ok": True, "count": len(incoming)})
         if p.startswith("/api/place_order"):
             norm, err = normalize_order(b)
             if err:
