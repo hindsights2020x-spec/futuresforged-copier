@@ -13,7 +13,7 @@ emergency flatten + TradingView webhook are ALL implemented here.
 
 Run:  python3 copier_server.py        (state persists to copier_state.json)
 """
-import json, os, threading, random, urllib.request, urllib.parse
+import json, os, threading, random, urllib.request, urllib.parse, urllib.error
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -120,6 +120,54 @@ def fetch_book(root):
     url  = f"{BARS_SOURCE}/api/book?{qs}"
     with urllib.request.urlopen(url, timeout=4) as r:
         return json.loads(r.read() or b"{}")
+
+
+# --- Market synopsis proxy (Handoff #53) -----------------------------------
+# The synopsis is generated on ff-bot (:7331) from the engine's in-process
+# state. Unlike bars/L2 we do NOT route this through the public :7333 view:
+# :7333 is internet-exposed behind a static view token, and /synopsis spends
+# real API budget per cache miss. We go straight to :7331 (loopback, tailnet-
+# gated) and authenticate with the bot's STATIC RECORDER_AUTH_TOKEN, which
+# bot_engine accepts as X-Bot-Token (bypassing the browser Basic-Auth prompt).
+SYNOPSIS_SOURCE = os.environ.get("SYNOPSIS_SOURCE_URL", "http://127.0.0.1:7331")
+
+def _bot_token():
+    """Static bot API token: copier env first, else parse ff-bot's .env
+    (same resolution order as _bars_token)."""
+    t = os.environ.get("RECORDER_AUTH_TOKEN", "").strip()
+    if t:
+        return t
+    try:
+        with open(BOT_ENV_PATH) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("RECORDER_AUTH_TOKEN="):
+                    return s.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
+
+def fetch_synopsis(symbol, tf, entitlement=""):
+    """Proxy ff-bot's /synopsis. Returns the bot's JSON body UNCHANGED so the
+    client renders it as-is; on transport failure returns a shaped error
+    rather than raising. Micros are passed through — the bot maps them."""
+    params = {"symbol": (symbol or "MNQ").upper(), "tf": (tf or "5m").lower()}
+    if entitlement:
+        params["entitlement"] = entitlement
+    url = f"{SYNOPSIS_SOURCE}/synopsis?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"X-Bot-Token": _bot_token()})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return json.loads(r.read() or b"{}"), 200
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read() or b"{}"), e.code
+        except Exception:
+            return {"ok": False, "error": "upstream_error",
+                    "reason": f"http_{e.code}"}, e.code
+    except Exception as e:
+        return {"ok": False, "error": "upstream_unreachable",
+                "reason": str(e)[:200]}, 502
 
 
 def now_iso():
@@ -623,6 +671,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, fetch_book(root))
             except Exception as e:
                 self._send(200, {"ok": False, "bids": [], "asks": [], "error": str(e)})
+        elif self.path.startswith("/api/synopsis"):
+            # Handoff #53 — AI market synopsis, proxied from ff-bot :7331.
+            # Accepts ?symbol= (client Chart Studio) or ?root= (dashboard),
+            # plus an optional ?entitlement= b64-JSON from the licensing layer.
+            q    = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            sym  = (q.get("symbol", q.get("root", ["MNQ"]))[0] or "MNQ").upper()
+            tf   = (q.get("tf", ["5m"])[0] or "5m")
+            ent  = (q.get("entitlement", [""])[0] or "")
+            body, status = fetch_synopsis(sym, tf, ent)
+            self._send(status if status in (200, 400, 429, 503) else 200, body)
         elif self.path in ("/", "/index.html") and os.path.exists(DASHBOARD):
             with open(DASHBOARD, "rb") as f:
                 self._send(200, f.read(), "text/html; charset=utf-8")
