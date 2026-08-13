@@ -221,8 +221,16 @@ def load_state():
         try:
             with open(STATE_FILE) as f:
                 s = json.load(f)
-            for k in ("accounts", "instruments"):
-                s.setdefault(k, DEFAULT_STATE[k])
+            s.setdefault("accounts", DEFAULT_STATE["accounts"])
+            # Instruments are STATIC contract specs, not user state — nothing
+            # mutates them at runtime. They must come from DEFAULT_STATE every
+            # start, not from the persisted file: setdefault only fills a MISSING
+            # key, so a spec baked into an old copier_state.json would override
+            # the source forever. That is exactly how the MES tick value stayed
+            # at 0.625 (half the real $/point) after the source was corrected —
+            # the fix looked deployed and wasn't. Overwriting here also repairs
+            # any state file already carrying the wrong numbers.
+            s["instruments"] = json.loads(json.dumps(DEFAULT_STATE["instruments"]))
             s.setdefault("orders", []); s.setdefault("log", []); s.setdefault("positions", {})
             s.setdefault("account_controls", {})  # Handoff #31
             s.setdefault("groups", [])            # Phase 1 — copier groups
