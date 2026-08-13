@@ -243,15 +243,24 @@ def load_state():
 STATE = load_state()
 
 def save_state():
+    # Self-locking. _LOCK is an RLock, so this is safe whether or not the caller
+    # already holds it — which matters now that submits run OUTSIDE the lock and
+    # these helpers get called from both contexts.
     try:
+        with _LOCK:
+            blob = json.dumps(STATE, indent=2)
         with open(STATE_FILE, "w") as f:
-            json.dump(STATE, f, indent=2)
+            f.write(blob)
     except Exception as e:
         log(f"state save failed: {e}", "WARN")
 
 def log(msg, level="INFO"):
-    STATE["log"].insert(0, {"ts": hhmmss(), "level": level, "msg": msg})
-    STATE["log"] = STATE["log"][:200]
+    # Self-locking for the same reason: submit_order()/flatten_account() log from
+    # outside the state lock, and an unguarded list mutation from a request
+    # thread would race the dashboard's /api/state read.
+    with _LOCK:
+        STATE["log"].insert(0, {"ts": hhmmss(), "level": level, "msg": msg})
+        STATE["log"] = STATE["log"][:200]
 
 
 # ===========================================================================
@@ -457,17 +466,42 @@ def _record_pnl_and_check(account_key, pnl):
         c["kill_switch"] = False; c["halted_reason"] = "TARGET HIT"
         log(f"{_acct_short(account_key)} HALTED — daily target hit (${c['day_pnl']})", "WARN")
 
+# Per-account submit locks. The state lock (_LOCK) must NEVER be held across a
+# broker call, but the gate->submit->record sequence for ONE account still has to
+# be atomic: that ordering is what makes the kill switch and daily loss/win caps
+# work, because each submit's gate check must see the P&L recorded by the
+# previous one. A per-account lock keeps that guarantee while leaving _LOCK free,
+# so /api/state and the rest of the dashboard stay responsive during a submit.
+_SUBMIT_LOCKS = {}
+_SUBMIT_LOCKS_GUARD = threading.Lock()
+
+def _submit_lock(account_key):
+    with _SUBMIT_LOCKS_GUARD:
+        lk = _SUBMIT_LOCKS.get(account_key)
+        if lk is None:
+            lk = _SUBMIT_LOCKS[account_key] = threading.Lock()
+        return lk
+
+
 def _route_to(account_key, order):
     """Per-account gate, then submit. Returns (result, realized_pnl). A killed or
-    limit-breached account is skipped WITHOUT reaching submit_order()."""
-    active, reason = _account_active(account_key)
-    if not active:
-        log(f"Order not routed to {_acct_short(account_key)} — halted ({reason})", "WARN")
-        return {"ok": False, "msg": f"halted ({reason}) — not routed"}, None
-    r = submit_order(account_key, order)
-    pnl = _fill_pnl(account_key, order, r)
-    _record_pnl_and_check(account_key, pnl)
-    return r, pnl
+    limit-breached account is skipped WITHOUT reaching submit_order().
+
+    The broker call happens with NO state lock held — holding it across a live
+    submit froze every reader (including the dashboard's 1.5s /api/state poll)
+    for the duration of the round-trip. Silence during an order is what invites a
+    second click, which is a second order."""
+    with _submit_lock(account_key):
+        with _LOCK:
+            active, reason = _account_active(account_key)
+            if not active:
+                log(f"Order not routed to {_acct_short(account_key)} — halted ({reason})", "WARN")
+                return {"ok": False, "msg": f"halted ({reason}) — not routed"}, None
+        r = submit_order(account_key, order)          # broker I/O — unlocked
+        with _LOCK:
+            pnl = _fill_pnl(account_key, order, r)    # mutates positions
+            _record_pnl_and_check(account_key, pnl)   # mutates day_pnl / kill switch
+        return r, pnl
 
 
 # ---------------------------------------------------------------------------
@@ -586,17 +620,29 @@ def place_order(order):
             follower_items = [(k, c) for k, c in STATE["followers"].items() if c.get("enabled")]
             ctx = "global"
 
-        results = []
-        r, m_pnl = _route_to(master, order)
-        results.append({"role": "master", "account": _acct_short(master), "ok": r["ok"], "msg": r["msg"], "pnl": m_pnl})
+        # Build the full fan-out plan while the lock is held (this is all STATE
+        # reads), including each account's display name, so the submit phase
+        # below touches no shared state at all.
+        targets = [("master", master, order, _acct_short(master))]
         for fk, fcfg in follower_items:
             contracts = max(1, round(order["contracts"] * float(fcfg.get("ratio", 1.0))))
             forder = dict(order)
             forder["contracts"] = contracts
             if fcfg.get("instrument_override"):
                 forder["instrument"] = fcfg["instrument_override"]
-            r, f_pnl = _route_to(fk, forder)
-            results.append({"role": "follower", "account": _acct_short(fk), "ok": r["ok"], "msg": r["msg"], "pnl": f_pnl})
+            targets.append(("follower", fk, forder, _acct_short(fk)))
+
+    # --- SUBMIT: state lock released. _route_to takes the per-account submit
+    # lock and re-acquires _LOCK only for the short gate/record steps, so a live
+    # broker round-trip no longer blocks /api/state or any other request. ---
+    results = []
+    for role, key, o, short in targets:
+        r, pnl = _route_to(key, o)
+        results.append({"role": role, "account": short, "ok": r["ok"], "msg": r["msg"], "pnl": pnl})
+    m_pnl = results[0]["pnl"] if results else None
+
+    # --- RECORD: back under the lock for the state mutation. ---
+    with _LOCK:
         STATE["orders"].insert(0, {
             "dt": now_iso(), "instrument": order["instrument"], "direction": order["direction"],
             "order_type": order["order_type"], "contracts": order["contracts"],
@@ -607,19 +653,34 @@ def place_order(order):
         STATE["orders"] = STATE["orders"][:100]
         log(f"Order placed ({ctx}): {order['direction']} {order['contracts']}x {order['instrument']}")
         save_state()
-        return {"ok": True, "results": results}
+    return {"ok": True, "results": results}
 
 
 def emergency_flatten():
+    # Raise the flag BEFORE flattening, not after. Previously the global lock was
+    # held for the whole sweep, so a concurrent place_order simply blocked until
+    # it finished and then saw emergency=True. Now that submits run unlocked,
+    # that incidental protection is gone: the flag is what stops a new order
+    # racing in while positions are being flattened. It must be set first.
     with _LOCK:
-        results = []
-        for key in STATE["accounts"]:
-            r = flatten_account(key)
-            results.append({"account": _acct_short(key), "ok": r["ok"], "msg": r["msg"]})
         STATE["emergency"] = True
+        keys   = list(STATE["accounts"].keys())
+        shorts = {k: _acct_short(k) for k in keys}
         log("EMERGENCY FLATTEN — all accounts", "WARN")
         save_state()
-        return {"ok": True, "results": results}
+
+    # Flatten with the state lock released — this is a live broker call per
+    # account, and an operator hitting the panic button must not be met with a
+    # dashboard that has stopped responding.
+    results = []
+    for key in keys:
+        try:
+            r = flatten_account(key)
+        except Exception as e:
+            r = {"ok": False, "msg": f"flatten error: {type(e).__name__}"}
+        # One account failing must never abandon the rest of the sweep.
+        results.append({"account": shorts[key], "ok": r["ok"], "msg": r["msg"]})
+    return {"ok": True, "results": results}
 
 
 # ---------------------------------------------------------------------------
