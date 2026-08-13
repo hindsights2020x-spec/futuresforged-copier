@@ -13,7 +13,7 @@ emergency flatten + TradingView webhook are ALL implemented here.
 
 Run:  python3 copier_server.py        (state persists to copier_state.json)
 """
-import json, os, threading, random, urllib.request, urllib.parse, urllib.error
+import json, os, threading, random, time, urllib.request, urllib.parse, urllib.error
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -466,6 +466,60 @@ def _record_pnl_and_check(account_key, pnl):
         c["kill_switch"] = False; c["halted_reason"] = "TARGET HIT"
         log(f"{_acct_short(account_key)} HALTED — daily target hit (${c['day_pnl']})", "WARN")
 
+# ---------------------------------------------------------------------------
+# Duplicate-order guard
+# ---------------------------------------------------------------------------
+# The same order arriving twice in quick succession is almost always one order
+# sent twice, not two intended trades: a double-click, an impatient retry after
+# a slow round-trip, or a webhook redelivery. On 2026-08-04 exactly this turned
+# 1 contract into 2 on the bot's manual panel.
+#
+# This lives SERVER-side on purpose. A client-side button guard cannot protect
+# /webhook/tradingview, which reaches the same place_order().
+#
+# Fail-safe direction: it only ever REFUSES, never places. The worst case is a
+# genuine rapid re-entry being told to try again, which is recoverable; the case
+# it prevents is an unintended doubled position, which is not.
+#
+# DUP_WINDOW_SEC is deliberately short and configurable — a legitimate fast
+# second entry has to stay possible. 2s covers a double-click and a retry
+# without meaningfully constraining deliberate trading.
+DUP_WINDOW_SEC = float(os.environ.get("COPIER_DUP_WINDOW_SEC", "2") or 2)
+_recent_orders = {}          # signature -> monotonic timestamp of last accept
+
+def _order_signature(order):
+    """What makes two orders 'the same trade'. Price fields are included so that
+    moving a limit and resending is NOT treated as a duplicate."""
+    return (
+        str(order.get("group_id") or ""),
+        str(order.get("instrument", "")).upper(),
+        str(order.get("direction", "")).upper(),
+        str(order.get("order_type", "")).upper(),
+        int(order.get("contracts") or 0),
+        str(order.get("limit_price") or ""),
+        str(order.get("stop_price") or ""),
+    )
+
+def _dup_check(order):
+    """(is_duplicate, seconds_ago). Call with _LOCK held. Records the order as
+    seen when it is accepted, so the window slides from the last ACCEPTED order
+    rather than the last attempt — a refused duplicate must not extend it."""
+    if DUP_WINDOW_SEC <= 0:
+        return False, 0.0
+    now = time.monotonic()
+    sig = _order_signature(order)
+    prev = _recent_orders.get(sig)
+    if prev is not None and (now - prev) < DUP_WINDOW_SEC:
+        return True, now - prev
+    _recent_orders[sig] = now
+    # Bounded: drop anything long past the window so this cannot grow forever.
+    if len(_recent_orders) > 256:
+        cutoff = now - max(DUP_WINDOW_SEC, 60)
+        for k in [k for k, t in _recent_orders.items() if t < cutoff]:
+            _recent_orders.pop(k, None)
+    return False, 0.0
+
+
 # Per-account submit locks. The state lock (_LOCK) must NEVER be held across a
 # broker call, but the gate->submit->record sequence for ONE account still has to
 # be atomic: that ordering is what makes the kill switch and daily loss/win caps
@@ -598,6 +652,16 @@ def place_order(order):
         if STATE.get("emergency"):
             log("Order blocked — emergency stop active", "WARN")
             return {"ok": False, "results": [], "msg": "emergency active"}
+
+        # Refuse an identical order inside the duplicate window. Checked BEFORE
+        # any routing or submit, and while holding the lock, so two concurrent
+        # requests cannot both pass it.
+        is_dup, ago = _dup_check(order)
+        if is_dup:
+            msg = (f"duplicate ignored — same order {ago:.1f}s ago "
+                   f"(within {DUP_WINDOW_SEC:g}s). Resend if you meant it.")
+            log(f"Order REFUSED — {msg}", "WARN")
+            return {"ok": False, "results": [], "msg": msg, "duplicate": True}
 
         # Routing target: a specific group (group_id) fans out to that group's master
         # + subs; otherwise the global master + enabled followers (legacy behavior).
