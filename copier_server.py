@@ -196,7 +196,7 @@ DEFAULT_STATE = {
         "NQ":  {"name": "Nasdaq Futures", "category": "Futures", "tick": 0.25, "tick_value": 5.0},
         "ES":  {"name": "S&P 500 Futures", "category": "Futures", "tick": 0.25, "tick_value": 12.5},
         "MNQ": {"name": "Micro Nasdaq",    "category": "Micro",   "tick": 0.25, "tick_value": 0.5},
-        "MES": {"name": "Micro S&P",       "category": "Micro",   "tick": 0.25, "tick_value": 0.625},
+        "MES": {"name": "Micro S&P",       "category": "Micro",   "tick": 0.25, "tick_value": 1.25},
     },
     "orders": [],
     "positions": {},   # account_key -> {qty(signed), avg, instrument} for per-trade P&L
