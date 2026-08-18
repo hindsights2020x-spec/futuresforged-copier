@@ -67,6 +67,25 @@ def _bars_token():
         pass
     return ""
 
+def _view_get(path, params, timeout=4):
+    """GET a :7333 read-only-view endpoint with header auth.
+
+    H-56 Blocker 3 follow-on. The token used to ride along as ?k=<token>, which
+    put the secret in every URL — request lines land in access logs, proxy logs
+    and Referer headers. readonly_server accepts both forms, so this is a
+    like-for-like swap; the query form stays supported there for the browser's
+    first load (it needs a URL it can be handed), not for service-to-service.
+    """
+    qs  = urllib.parse.urlencode(params)
+    req = urllib.request.Request(f"{BARS_SOURCE}{path}?{qs}",
+                                 headers={"Accept": "application/json"})
+    tok = _bars_token()
+    if tok:
+        req.add_header("X-View-Token", tok)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
 def fetch_bars(root, interval):
     """Proxy ff-bot's live 1m Rithmic bars (via the :7333 read-only view) and
     aggregate to `interval` minutes. Returns Handoff #30 shape: list of
@@ -81,11 +100,7 @@ def fetch_bars(root, interval):
         interval = max(1, int(interval))
     except (TypeError, ValueError):
         interval = 5
-    qs  = urllib.parse.urlencode({"symbol": sym, "tf": "1m", "n": "3000",
-                                  "k": _bars_token()})
-    url = f"{BARS_SOURCE}/api/bars?{qs}"
-    with urllib.request.urlopen(url, timeout=4) as r:
-        raw = json.loads(r.read() or b"{}")
+    raw = _view_get("/api/bars", {"symbol": sym, "tf": "1m", "n": "3000"})
     span, buckets, order = interval * 60, {}, []
     for b in raw.get("bars", []):
         try:
@@ -116,10 +131,7 @@ def fetch_book(root):
     to their full-size book (MNQ->NQ, MES->ES), matching the bars/L2 mapping above."""
     root = (root or "NQ").upper()
     sym  = _BARS_ROOT_MAP.get(root, "NQ")
-    qs   = urllib.parse.urlencode({"symbol": sym, "k": _bars_token()})
-    url  = f"{BARS_SOURCE}/api/book?{qs}"
-    with urllib.request.urlopen(url, timeout=4) as r:
-        return json.loads(r.read() or b"{}")
+    return _view_get("/api/book", {"symbol": sym})
 
 
 # --- Market synopsis proxy (Handoff #53) -----------------------------------
