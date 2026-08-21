@@ -86,6 +86,56 @@ def _view_get(path, params, timeout=4):
         return json.loads(r.read() or b"{}")
 
 
+_BARS_CACHE = {}          # sym -> {"rows": {epoch_min: bar}, "at": datetime}
+_BARS_CACHE_LOCK = threading.Lock()
+_BARS_FULL_REFRESH_SEC = 1800
+
+
+def _fetch_1m(sym):
+    """1m bars for `sym`, refreshing only the tail.
+
+    Chart Studio polls once a second (POLL_BARS_MS = 1000) and these are
+    ONE-MINUTE bars, so 59 of every 60 polls used to re-download the entire
+    3000-bar history — 349 KB a time, ~2.8 Mbit/s per client, sustained, to
+    learn nothing but the newest candle's close. History does not change:
+    keep it, and ask only for what can have moved.
+
+    The tail is sized by elapsed wall-clock, not a fixed count, so a client
+    that was asleep or throttled still closes its gap instead of silently
+    growing a hole in the series.
+    """
+    now = datetime.now(timezone.utc)
+    with _BARS_CACHE_LOCK:
+        entry = _BARS_CACHE.get(sym)
+        age = (now - entry["at"]).total_seconds() if entry else None
+
+    if entry is None or age > _BARS_FULL_REFRESH_SEC:
+        n = "3000"                      # cold start, or cache too old to patch
+    else:
+        # +3 covers the still-forming candle plus a minute of slack
+        n = str(max(5, min(3000, int(age // 60) + 3)))
+
+    fresh = _view_get("/api/bars", {"symbol": sym, "tf": "1m", "n": n})
+    rows = fresh.get("bars") or []
+
+    with _BARS_CACHE_LOCK:
+        entry = _BARS_CACHE.get(sym)
+        merged = dict(entry["rows"]) if (entry and n != "3000") else {}
+        for b in rows:
+            try:
+                key = int(datetime.fromisoformat(b["t"]).timestamp())
+            except (KeyError, TypeError, ValueError):
+                continue
+            merged[key] = b         # a re-sent minute overwrites: last write wins
+        if not merged:
+            # Upstream gave us nothing usable. Do not cache the emptiness.
+            return list(entry["rows"].values()) if entry else []
+        if len(merged) > 3000:
+            merged = {k: merged[k] for k in sorted(merged)[-3000:]}
+        _BARS_CACHE[sym] = {"rows": merged, "at": now}
+        return [merged[k] for k in sorted(merged)]
+
+
 def fetch_bars(root, interval):
     """Proxy ff-bot's live 1m Rithmic bars (via the :7333 read-only view) and
     aggregate to `interval` minutes. Returns Handoff #30 shape: list of
@@ -100,7 +150,7 @@ def fetch_bars(root, interval):
         interval = max(1, int(interval))
     except (TypeError, ValueError):
         interval = 5
-    raw = _view_get("/api/bars", {"symbol": sym, "tf": "1m", "n": "3000"})
+    raw = {"bars": _fetch_1m(sym)}
     span, buckets, order = interval * 60, {}, []
     for b in raw.get("bars", []):
         try:
